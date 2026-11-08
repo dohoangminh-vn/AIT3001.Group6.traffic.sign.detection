@@ -1,5 +1,12 @@
-traffic_public_test/
-traffic_train/
-*.csv
-*.txt
+archive/
+data/
+outputs/
+runs/
+wandb/
+.cache/
+.venv/
+__pycache__/
+*.py[cod]
 *.zip
+*.pt
+.env

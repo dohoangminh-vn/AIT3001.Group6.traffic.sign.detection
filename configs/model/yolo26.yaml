@@ -1,0 +1,11 @@
+backend: yolo
+weights: yolo26s.pt
+imgsz: 640
+batch_size: 4
+epochs: 50
+patience: 10
+device: 0
+amp: true
+workers: 2
+# Use 0.02 for a smoke test (train subset; validation stays intact).
+fraction: 0.02

@@ -1,0 +1,22 @@
+defaults:
+  - model: yolo26
+  - _self_
+
+seed: 42
+data:
+  root: /kaggle/input
+  prepared_dir: data/za_traffic_yolo
+  val_fraction: 0.2
+output_dir: outputs
+resume: null
+prepare_only: false
+tracking:
+  project: za-traffic-baseline
+  entity: null
+  mode: online
+  checkpoint_every: 5
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: ${output_dir}/hydra/${now:%Y-%m-%d_%H-%M-%S}
