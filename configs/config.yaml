@@ -11,8 +11,8 @@ output_dir: outputs
 resume: null
 prepare_only: false
 tracking:
-  project: za-traffic-baseline
-  entity: null
+  project: Traffic Sign
+  entity: ducholmes-vietnam-national-university-hanoi-org
   mode: online
   checkpoint_every: 5
 hydra:
