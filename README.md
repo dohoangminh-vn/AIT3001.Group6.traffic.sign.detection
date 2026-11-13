@@ -78,22 +78,27 @@ Sửa `data.root` theo mount thật. Lệnh này train khoảng 2% tập train t
 
 Mặc định: pretrained `yolo26s.pt`, `imgsz=640`, batch 4, 100 epoch, patience 30, AMP bật, workers 2, seed 42. Giữ optimizer/augmentation mặc định của Ultralytics 8.4.204. Nếu OOM, thử `model.batch_size=2` trước khi giảm `model.imgsz=512`. Một lần train mới tạo thư mục riêng trong `outputs/`.
 
-Hydra cho phép override trực tiếp:
+Hydra cho phép override trực tiếp cả các tham số train của Ultralytics. Các tham số trong `model.train_args` mặc định theo recipe Ultralytics; dùng `null` để bỏ truyền một tham số và dùng giá trị mặc định của phiên bản thư viện:
 
 ```bash
 python train.py model=yolo26 model.batch_size=2 model.imgsz=640
+python train.py model.train_args.optimizer=AdamW model.train_args.lr0=0.001 model.train_args.lrf=0.01
+python train.py model.train_args.cos_lr=true model.train_args.warmup_epochs=5 model.train_args.weight_decay=0.0001
+python train.py model.train_args.mosaic=0.5 model.train_args.fliplr=0.25
 python train.py tracking.project=my-traffic-project tracking.entity=my-team
 python train.py --cfg job
 ```
+
+Có thể cấu hình thêm các giá trị Ultralytics như `momentum`, `warmup_bias_lr`, `close_mosaic`, `hsv_h`, `degrees`, `translate`, `scale`, `shear`, `perspective`, `flipud`, `mixup` và `copy_paste` theo cùng cú pháp `model.train_args.<tên>=<giá_trị>`. Xem `configs/model/yolo26.yaml` để biết danh sách mặc định đang được truyền vào train mới.
 
 ## W&B và resume
 
 Tích hợp Ultralytics ghi loss, learning rate, mAP@0.5, mAP@0.5:0.95, precision, recall và biểu đồ; tự ghi tham số train. Repo không bổ sung Git/GPU/dependency logging hay upload split manifest.
 
-- Mỗi 5 epoch (và epoch cuối), callback upload artifact loại `checkpoint`, tên `run_<run_id>_checkpoint`, alias `latest`. Chứa `last.pt` có optimizer, `best.pt` hiện có và `run.json` để nối lại đúng W&B run/dataset/split. Callback đợi upload thành công trước khi báo `uploaded`.
+- Mỗi 5 epoch (và epoch cuối), callback upload artifact loại `checkpoint`, tên `run_<run_id>_checkpoint`, alias `latest`. Chứa `last.pt` có optimizer, `best.pt` hiện có và `run.json` để nối lại đúng W&B run/dataset/split. Sau khi upload thành công, callback xóa các version checkpoint cũ cùng run, chỉ giữ version mới nhất để resume; artifact model tốt nhất không bị xóa.
 - Khi kết thúc, tích hợp Ultralytics đánh giá lại best model và upload artifact loại `model`, tên `run_<run_id>_model`, alias `best`. Tiêu chí best là validation mAP@0.5:0.95.
 - Checkpoint phục hồi định kỳ khác với `weights/last.pt` và `weights/best.pt` sau khi train kết thúc: các file cuối có thể đã bị loại optimizer. Best weights dùng inference, không dùng resume.
-- Upload tạo artifact versions; không tự xóa lịch sử. Kaggle ngắt đột ngột chỉ phục hồi được tới mốc đã upload gần nhất. Checkpoint epoch cuối đã hoàn tất toàn bộ budget không còn epoch để resume.
+- Do chỉ giữ checkpoint mới nhất, Kaggle ngắt đột ngột chỉ phục hồi được tới mốc đã upload gần nhất. Việc dọn version cũ cần W&B API key có quyền xóa artifact; nếu upload thành công nhưng không đủ quyền xóa, checkpoint mới vẫn có alias `latest` còn callback sẽ báo lỗi. Checkpoint epoch cuối đã hoàn tất toàn bộ budget không còn epoch để resume.
 
 Resume từ W&B trong phiên Kaggle mới, dùng chính xác artifact URI in ở cuối run hoặc trên trang Artifacts:
 
@@ -107,7 +112,7 @@ Hoặc local: tải artifact, giữ `last.pt`, `best.pt`, `run.json` cùng thư 
 python train.py resume=/path/to/downloaded-artifact/last.pt
 ```
 
-Resume tiếp tục cùng W&B run ID và giữ epoch budget, optimizer, recipe từ checkpoint. Có thể override batch, imgsz, device và workers. Không dùng resume để đổi dataset/split hoặc kéo dài run đã train xong; bắt đầu run mới cho thí nghiệm khác. Output của phiên resume vẫn nằm trong thư mục mới trên working hiện tại; best model từ phiên trước được giữ lại.
+Resume tiếp tục cùng W&B run ID và giữ epoch budget, optimizer, recipe từ checkpoint. Các giá trị `model.train_args.*` chỉ áp dụng cho run mới; khi resume chúng không được truyền vào Ultralytics. Có thể override batch, imgsz, device và workers. Không dùng resume để đổi dataset/split hoặc kéo dài run đã train xong; bắt đầu run mới cho thí nghiệm khác. Output của phiên resume vẫn nằm trong thư mục mới trên working hiện tại; best model từ phiên trước được giữ lại.
 
 Để kiểm tra resume thật trên Kaggle: chạy 10 epoch với `tracking.checkpoint_every=1`, đợi thông báo upload epoch đầu, ngắt cell rồi resume từ artifact `latest`. Xác nhận log tiếp tục epoch kế tiếp và W&B vẫn cùng run. Giữ `model.fraction=0.02` từ đầu cho phép thử ngắn; resume giữ fraction từ checkpoint.
 

@@ -31,13 +31,52 @@ class CheckpointTests(unittest.TestCase):
                 self.assertEqual(artifact.add_file.call_count, 3)
                 run.log_artifact.assert_called_once_with(artifact, aliases=["latest"])
                 run.log_artifact.return_value.wait.assert_called_once()
+                api = wandb.Api.return_value
+                previous = MagicMock(version="v0")
+                current = MagicMock(version="v1")
+                api.artifact_versions.return_value = [previous, current]
+                # Trigger another save with explicit API version values.
+                run.log_artifact.return_value.version = "v1"
+                trainer.epoch, trainer.stop = 9, False
+                callback(trainer)
+                previous.delete.assert_called_once()
+                current.delete.assert_not_called()
+                api.artifact_versions.assert_called_with(
+                    "checkpoint", "team/traffic/run_abc123_checkpoint"
+                )
                 path, metadata = resolve_resume(str(root / "last.pt"), root)
                 self.assertEqual(path, (root / "last.pt").resolve())
                 self.assertEqual(metadata, info)
                 # The final partial interval is also protected before optimizer stripping.
                 trainer.epoch, trainer.stop = 6, True
                 callback(trainer)
-                self.assertEqual(run.log_artifact.call_count, 2)
+                self.assertEqual(run.log_artifact.call_count, 3)
+
+    def test_offline_checkpoint_does_not_delete_versions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "last.pt").write_bytes(b"optimizer checkpoint")
+            trainer = SimpleNamespace(epoch=0, stop=False, wdir=root,
+                                      last=root / "last.pt", best=root / "best.pt")
+            run, wandb = MagicMock(), MagicMock()
+            run.id = "abc123"
+            with patch.dict("sys.modules", {"wandb": wandb}):
+                checkpoint_callback(run, {"run_id": "abc123"}, 1, False)(trainer)
+            wandb.Api.assert_not_called()
+
+    def test_upload_failure_does_not_delete_versions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "last.pt").write_bytes(b"optimizer checkpoint")
+            trainer = SimpleNamespace(epoch=0, stop=False, wdir=root,
+                                      last=root / "last.pt", best=root / "best.pt")
+            run, wandb = MagicMock(), MagicMock()
+            run.id = "abc123"
+            run.log_artifact.return_value.wait.side_effect = RuntimeError("upload failed")
+            with patch.dict("sys.modules", {"wandb": wandb}):
+                with self.assertRaisesRegex(RuntimeError, "upload failed"):
+                    checkpoint_callback(run, {"run_id": "abc123"}, 1, True)(trainer)
+            wandb.Api.assert_not_called()
 
     def test_artifact_download_and_missing_local_checkpoint(self):
         with tempfile.TemporaryDirectory() as directory:

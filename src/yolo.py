@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
+from omegaconf import OmegaConf
+
 from src.data import prepare
 
 
@@ -33,6 +35,14 @@ def checkpoint_callback(run, info, every, online):
     """Called after save_model, before final evaluation strips optimizer state."""
     import wandb
 
+    def delete_previous_versions(artifact_name, current_version):
+        """Delete older checkpoint versions after the replacement is uploaded."""
+        api = wandb.Api()
+        collection = f"{run.entity}/{run.project}/{artifact_name}"
+        for version in api.artifact_versions("checkpoint", collection):
+            if version.version != current_version:
+                version.delete()
+
     def save(trainer):
         epoch = trainer.epoch + 1
         if epoch % every and not trainer.stop:
@@ -48,6 +58,7 @@ def checkpoint_callback(run, info, every, online):
         logged = run.log_artifact(artifact, aliases=["latest"])
         if online:
             logged.wait()  # Do not announce a protected checkpoint until upload completes.
+            delete_previous_versions(artifact.name, logged.version)
         print(f"Checkpoint epoch {epoch}: {artifact.name} ({'uploaded' if online else 'offline'})")
 
     return save
@@ -115,9 +126,10 @@ def train(cfg):
             # Keep original optimizer, epoch budget and training recipe on resume.
             model.train(resume=True, **args)
         else:
+            train_args = OmegaConf.to_container(cfg.model.train_args, resolve=True)
             model.train(epochs=cfg.model.epochs, patience=cfg.model.patience,
                         amp=cfg.model.amp, seed=cfg.seed, deterministic=True,
                         fraction=cfg.model.fraction, cache=False, save=True,
-                        project=str(output), name=name, **args)
+                        project=str(output), name=name, **args, **train_args)
         print(f"Best weights: {model.trainer.best}")
         print(f"W&B checkpoint: {run.entity}/{run.project}/run_{run.id}_checkpoint:latest")
