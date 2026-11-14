@@ -38,10 +38,9 @@ def checkpoint_callback(run, info, every, online):
     def delete_previous_versions(artifact, current_version):
         """Delete older checkpoint versions after the replacement is uploaded."""
         api = wandb.Api()
-        # The logged artifact may expose ``name`` with a version suffix, while
-        # artifact_versions expects the collection path without ``:vN``.
-        name = getattr(artifact, "source_name", None) or artifact.name.split(":", 1)[0]
-        collection = f"{run.entity}/{run.project}/{name}"
+        # W&B's artifact_versions expects the collection name, not the full
+        # artifact identifier (which may include ``:vN``).
+        collection = f"{run.entity}/{run.project}/run_{run.id}_checkpoint"
         for version in api.artifact_versions("checkpoint", collection):
             if version.version != current_version:
                 version.delete()
@@ -61,7 +60,12 @@ def checkpoint_callback(run, info, every, online):
         logged = run.log_artifact(artifact, aliases=["latest"])
         if online:
             logged.wait()  # Do not announce a protected checkpoint until upload completes.
-            delete_previous_versions(logged, logged.version)
+            try:
+                delete_previous_versions(logged, logged.version)
+            except Exception as error:
+                # Upload already succeeded; pruning is housekeeping and must
+                # not abort the training run or invalidate the latest alias.
+                print(f"Warning: checkpoint uploaded, but old versions could not be pruned: {error}")
         print(f"Checkpoint epoch {epoch}: {artifact.name} ({'uploaded' if online else 'offline'})")
 
     return save
