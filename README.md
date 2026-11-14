@@ -91,6 +91,24 @@ python train.py --cfg job
 
 Có thể cấu hình thêm các giá trị Ultralytics như `momentum`, `warmup_bias_lr`, `close_mosaic`, `hsv_h`, `degrees`, `translate`, `scale`, `shear`, `perspective`, `flipud`, `mixup` và `copy_paste` theo cùng cú pháp `model.train_args.<tên>=<giá_trị>`. Xem `configs/model/yolo26.yaml` để biết danh sách mặc định đang được truyền vào train mới.
 
+## Xem lỗi dự đoán
+
+Sau khi train, chạy chẩn đoán trên toàn bộ validation set để xem trực quan các ảnh có lỗi. Dùng `best.pt` của run:
+
+```bash
+python diagnose.py diagnostic.checkpoint=outputs/<run>/weights/best.pt data.root=/path/to/za_traffic_2020
+```
+
+Cũng có thể dùng checkpoint artifact trên W&B; artifact cần có `best.pt` và môi trường cần `WANDB_API_KEY`:
+
+```bash
+python diagnose.py "diagnostic.checkpoint=wandb://<entity>/<project>/run_<run_id>_checkpoint:latest" data.root=/path/to/za_traffic_2020
+```
+
+Mặc định confidence là `0.25`, ngưỡng IoU để ghép prediction với nhãn là `0.5`; có thể đổi bằng `diagnostic.conf=...` và `diagnostic.match_iou=...`. `match_iou` dùng để phân loại lỗi trong báo cáo, không thay đổi ngưỡng NMS của YOLO và không phải phép tính mAP.
+
+Mỗi lần chạy tạo `outputs/diagnostics/<checkpoint>-<timestamp>/` gồm `images/` (chỉ các ảnh có lỗi), `image_summary.csv` (một dòng cho mọi ảnh validation), `errors.csv` (một dòng cho mỗi box FP/FN hoặc nhầm lớp) và `report.json` (checkpoint, split và ngưỡng). Box đúng màu xanh lá, false positive màu đỏ, false negative màu cam, nhầm lớp màu tím. Các số đếm lỗi trong báo cáo phục vụ điều tra ảnh; một nhầm lớp tính là một sự kiện lỗi và các số này không thay cho mAP. Public test không được dùng vì không có ground truth.
+
 ## W&B và resume
 
 Tích hợp Ultralytics ghi loss, learning rate, mAP@0.5, mAP@0.5:0.95, precision, recall và biểu đồ; tự ghi tham số train. Repo không bổ sung Git/GPU/dependency logging hay upload split manifest.

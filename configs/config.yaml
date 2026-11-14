@@ -15,6 +15,11 @@ tracking:
   entity: ducholmes-vietnam-national-university-hanoi
   mode: online
   checkpoint_every: 5
+diagnostic:
+  checkpoint: null
+  conf: 0.25
+  match_iou: 0.5
+  device: ${model.device}
 hydra:
   job:
     chdir: false
