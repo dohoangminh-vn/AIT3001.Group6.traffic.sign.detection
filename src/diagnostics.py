@@ -394,6 +394,7 @@ def run_diagnostics(cfg):
         )
     confidence = float(cfg.diagnostic.conf)
     match_iou = float(cfg.diagnostic.match_iou)
+    use_half = bool(cfg.diagnostic.amp) and not str(cfg.diagnostic.device).lower().startswith("cpu")
     if not 0.0 <= confidence <= 1.0:
         raise ValueError("diagnostic.conf must be between 0 and 1")
     if not 0.0 < match_iou <= 1.0:
@@ -446,6 +447,8 @@ def run_diagnostics(cfg):
                 save=False,
                 verbose=False,
                 conf=confidence,
+                batch=int(cfg.diagnostic.batch_size),
+                half=use_half,
                 imgsz=int(cfg.model.imgsz),
                 device=cfg.diagnostic.device,
             )
@@ -507,6 +510,7 @@ def run_diagnostics(cfg):
             "confidence_threshold": confidence,
             "matching_iou_threshold": match_iou,
             "device": str(cfg.diagnostic.device),
+            "half_precision": use_half,
             "imgsz": int(cfg.model.imgsz),
             "class_names": {str(key): value for key, value in names.items()},
             "data_csv_sha256": preparation.get("csv_sha256"),

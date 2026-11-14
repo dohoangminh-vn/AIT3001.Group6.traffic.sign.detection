@@ -107,6 +107,8 @@ python diagnose.py "diagnostic.checkpoint=wandb://<entity>/<project>/run_<run_id
 
 Mặc định confidence là `0.25`, ngưỡng IoU để ghép prediction với nhãn là `0.5`; có thể đổi bằng `diagnostic.conf=...` và `diagnostic.match_iou=...`. `match_iou` dùng để phân loại lỗi trong báo cáo, không thay đổi ngưỡng NMS của YOLO và không phải phép tính mAP.
 
+Batch inference mặc định dùng cùng `model.batch_size` của cấu hình train (hiện là 4), đồng thời bật FP16 half-precision trên GPU để giảm VRAM. Nếu diagnostics thiếu VRAM, giảm riêng batch bằng `diagnostic.batch_size=1` hoặc `diagnostic.batch_size=2`; có thể tắt half precision bằng `diagnostic.amp=false` để đối chiếu kết quả. Trên CPU, FP16 tự tắt.
+
 Mỗi lần chạy tạo `outputs/diagnostics/<checkpoint>-<timestamp>/` gồm `images/` (chỉ các ảnh có lỗi), `image_summary.csv` (một dòng cho mọi ảnh validation), `errors.csv` (một dòng cho mỗi box FP/FN hoặc nhầm lớp) và `report.json` (checkpoint, split và ngưỡng). Box đúng màu xanh lá, false positive màu đỏ, false negative màu cam, nhầm lớp màu tím. Các số đếm lỗi trong báo cáo phục vụ điều tra ảnh; một nhầm lớp tính là một sự kiện lỗi và các số này không thay cho mAP. Public test không được dùng vì không có ground truth.
 
 ## W&B và resume

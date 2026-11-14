@@ -19,6 +19,8 @@ diagnostic:
   checkpoint: null
   conf: 0.25
   match_iou: 0.5
+  batch_size: ${model.batch_size}
+  amp: true
   device: ${model.device}
 hydra:
   job:
