@@ -7,8 +7,8 @@ patience: 10
 device: 0
 amp: true
 workers: 2
-# Use 0.02 for a smoke test (train subset; validation stays intact).
-fraction: 0.02
+# Use 0.02 explicitly for a smoke test; full dataset is the default.
+fraction: 1.0
 # Ultralytics train arguments. Null values use the installed Ultralytics defaults.
 train_args:
   optimizer: auto
@@ -34,3 +34,4 @@ train_args:
   mosaic: 1.0
   mixup: 0.0
   copy_paste: 0.0
+  tile: 640

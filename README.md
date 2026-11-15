@@ -76,7 +76,7 @@ Sửa `data.root` theo mount thật. Lệnh này train khoảng 2% tập train t
 !python train.py data.root=/kaggle/input/<dataset>/za_traffic_2020
 ```
 
-Mặc định: pretrained `yolo26s.pt`, `imgsz=640`, batch 4, 100 epoch, patience 30, AMP bật, workers 2, seed 42. Giữ optimizer/augmentation mặc định của Ultralytics 8.4.204. Nếu OOM, thử `model.batch_size=2` trước khi giảm `model.imgsz=512`. Một lần train mới tạo thư mục riêng trong `outputs/`.
+Mặc định: pretrained `yolo26s.pt`, `imgsz=640`, batch 4, 50 epoch, patience 10, AMP bật, workers 2, seed 42 và dùng toàn bộ dữ liệu train. Giữ optimizer/augmentation mặc định của Ultralytics 8.4.204. Nếu OOM, thử `model.batch_size=2` trước khi giảm `model.imgsz=512`. Một lần train mới tạo thư mục riêng trong `outputs/`.
 
 Hydra cho phép override trực tiếp cả các tham số train của Ultralytics. Các tham số trong `model.train_args` mặc định theo recipe Ultralytics; dùng `null` để bỏ truyền một tham số và dùng giá trị mặc định của phiên bản thư viện:
 
@@ -90,6 +90,25 @@ python train.py --cfg job
 ```
 
 Có thể cấu hình thêm các giá trị Ultralytics như `momentum`, `warmup_bias_lr`, `close_mosaic`, `hsv_h`, `degrees`, `translate`, `scale`, `shear`, `perspective`, `flipud`, `mixup` và `copy_paste` theo cùng cú pháp `model.train_args.<tên>=<giá_trị>`. Xem `configs/model/yolo26.yaml` để biết danh sách mặc định đang được truyền vào train mới.
+
+### Thử nghiệm tiling
+
+Ultralytics 8.4.204 hỗ trợ tham số `tile` trong train, validation và predict. Bắt đầu với hai run có cùng seed và hyperparameter; chỉ khác `tile`:
+
+```bash
+python train.py model.fraction=1.0 model.train_args.tile=false
+python train.py model.fraction=1.0 model.train_args.tile=640
+```
+
+Trên ảnh ZA Traffic 2020 kích thước 1622×626, `tile=640` chia ảnh thành các cửa sổ có overlap 20%. Ultralytics clip nhãn ở biên tile và giữ cả cửa sổ không có object làm ví dụ âm; validation ghép prediction về ảnh gốc trước khi tính metric. Tiling chạy nhiều lượt model hơn nên sẽ tốn thời gian hơn.
+
+Để diagnostics dùng đúng chế độ của run, truyền cùng override `model.train_args.tile`:
+
+```bash
+python diagnose.py diagnostic.checkpoint=outputs/<run>/weights/best.pt data.root=/path/to/za_traffic_2020 model.train_args.tile=640
+```
+
+`diagnostic.tile` lấy giá trị từ `model.train_args.tile`; báo cáo ghi lại tile size đã dùng. Tham số `tile` trong train args cũng có thể đặt `false` để chạy baseline không tiling.
 
 ## Xem lỗi dự đoán
 

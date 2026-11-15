@@ -133,7 +133,7 @@ class DiagnosticReportTests(unittest.TestCase):
             cfg = SimpleNamespace(
                 diagnostic=SimpleNamespace(
                     checkpoint=str(checkpoint), conf=0.25, match_iou=0.5,
-                    batch_size=4, amp=True, device="0"
+                    batch_size=4, amp=True, tile=640, device="0"
                 ),
                 data=SimpleNamespace(root="unused", prepared_dir=str(prepared), val_fraction=0.2),
                 model=SimpleNamespace(imgsz=640),
@@ -158,9 +158,11 @@ class DiagnosticReportTests(unittest.TestCase):
             self.assertEqual(report["totals"]["images"], 1)
             self.assertEqual(report["totals"]["false_positives"], 1)
             self.assertTrue(report["half_precision"])
+            self.assertEqual(report["tile"], 640)
             model.predict.assert_called_once()
             self.assertEqual(model.predict.call_args.kwargs["batch"], 4)
             self.assertTrue(model.predict.call_args.kwargs["half"])
+            self.assertEqual(model.predict.call_args.kwargs["tile"], 640)
 
 
 if __name__ == "__main__":

@@ -450,6 +450,7 @@ def run_diagnostics(cfg):
                 batch=int(cfg.diagnostic.batch_size),
                 half=use_half,
                 imgsz=int(cfg.model.imgsz),
+                tile=cfg.diagnostic.tile,
                 device=cfg.diagnostic.device,
             )
             processed = 0
@@ -512,6 +513,7 @@ def run_diagnostics(cfg):
             "device": str(cfg.diagnostic.device),
             "half_precision": use_half,
             "imgsz": int(cfg.model.imgsz),
+            "tile": cfg.diagnostic.tile,
             "class_names": {str(key): value for key, value in names.items()},
             "data_csv_sha256": preparation.get("csv_sha256"),
             "split_seed": preparation.get("seed"),

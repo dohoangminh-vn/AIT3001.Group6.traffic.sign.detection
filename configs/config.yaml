@@ -21,6 +21,7 @@ diagnostic:
   match_iou: 0.5
   batch_size: ${model.batch_size}
   amp: true
+  tile: ${model.train_args.tile}
   device: ${model.device}
 hydra:
   job:
