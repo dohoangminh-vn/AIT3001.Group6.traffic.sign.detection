@@ -1,1 +1,13 @@
 data/
+outputs/
+runs/
+wandb/
+.ipynb_checkpoints/
+
+*.pt
+*.pth
+*.onnx
+
+__pycache__/
+*.pyc 
+.venv/

@@ -1,0 +1,15 @@
+torch
+torchvision
+ultralytics>=8.3.0
+opencv-python
+matplotlib
+pandas
+pillow
+scikit-learn
+pyyaml
+tensorboard
+pycocotools
+albumentations
+sahi
+pytest
+wandb
