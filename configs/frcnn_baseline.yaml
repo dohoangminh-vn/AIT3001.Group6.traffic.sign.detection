@@ -1,0 +1,18 @@
+# Cấu hình Baseline 2: Faster R-CNN ResNet50-FPN-v2 (Two-Stage)
+train_json: data/processed/coco/train.json
+val_json: data/processed/coco/val.json
+img_dir: data/za_traffic_2020/traffic_train/images
+
+num_classes: 8          # 0: background + 7 lớp biển báo (1..7)
+small_anchors: true     # true: (8,16,32,64,128) cho biển nhỏ | false: mặc định (32..512) để làm Ablation!
+min_size: 626           # Giữ nguyên độ phân giải gốc 1622x626 trên GPU
+max_size: 1622
+
+epochs: 15
+batch_size: 4
+lr: 0.0002
+weight_decay: 0.0001
+num_workers: 2
+seed: 42
+
+out_dir: runs/frcnn/frcnn_small_anchors
