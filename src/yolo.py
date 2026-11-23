@@ -134,6 +134,29 @@ def train(cfg):
             model.train(resume=True, **args)
         else:
             train_args = OmegaConf.to_container(cfg.model.train_args, resolve=True)
+            scheduler_cfg = train_args.pop("scheduler", None)
+            if scheduler_cfg:
+                import torch
+
+                scheduler_cfg = dict(scheduler_cfg)
+                scheduler_name = scheduler_cfg.pop("name", "ReduceLROnPlateau")
+                if scheduler_name != "ReduceLROnPlateau":
+                    raise ValueError(f"Unsupported scheduler: {scheduler_name}")
+                monitor = scheduler_cfg.pop("monitor", "metrics/mAP50-95(B)")
+                scheduler_cfg.pop("mode", None)  # configured below for this metric
+                scheduler = None
+
+                def plateau_step(trainer):
+                    nonlocal scheduler
+                    if scheduler is None:
+                        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                            trainer.optimizer, mode="max", **scheduler_cfg
+                        )
+                    metric = trainer.metrics.get(monitor)
+                    if metric is not None:
+                        scheduler.step(float(metric))
+
+                model.add_callback("on_fit_epoch_end", plateau_step)
             model.train(epochs=cfg.model.epochs, patience=cfg.model.patience,
                         amp=cfg.model.amp, seed=cfg.seed, deterministic=True,
                         fraction=cfg.model.fraction, cache=False, save=True,

@@ -80,6 +80,8 @@ Mặc định: pretrained `yolo26s.pt`, `imgsz=640`, batch 4, 50 epoch, patience
 
 Hydra cho phép override trực tiếp cả các tham số train của Ultralytics. Các tham số trong `model.train_args` mặc định theo recipe Ultralytics; dùng `null` để bỏ truyền một tham số và dùng giá trị mặc định của phiên bản thư viện:
 
+Scheduler có thể cấu hình riêng bằng `model.train_args.scheduler` (không truyền trực tiếp khóa này vào Ultralytics). Ví dụ mặc định dùng `ReduceLROnPlateau`, theo dõi mAP50-95 của validation, giảm LR theo `factor` sau `patience` epoch không cải thiện và dừng giảm tại `min_lr`.
+
 ```bash
 python train.py model=yolo26 model.batch_size=2 model.imgsz=640
 python train.py model.train_args.optimizer=AdamW model.train_args.lr0=0.001 model.train_args.lrf=0.01
