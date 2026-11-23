@@ -1,8 +1,11 @@
 import json
 from pathlib import Path
 from PIL import Image
+# pyrefly: ignore[missing-import]
 import matplotlib.pyplot as plt
+# pyrefly: ignore[missing-import]
 import matplotlib.patches as patches
+# pyrefly: ignore[missing-import]
 from ultralytics import YOLO
 
 # 1. Đường dẫn dữ liệu gốc và chọn ảnh 1306.png (ảnh có nhiều biển báo đủ cỡ)
