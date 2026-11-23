@@ -1,0 +1,22 @@
+# Cấu hình huấn luyện Baseline 1: YOLOv8 (có thể đổi model thành yolo26s.pt)
+model: yolov8s.pt
+data: data/processed/yolo/dataset.yaml
+
+epochs: 50
+imgsz: 640          # Baseline: 640 | Ablation biển báo nhỏ: 1280
+batch: 16
+lr0: 0.01
+optimizer: auto
+seed: 42
+workers: 4
+
+# Augmentation phù hợp biển báo giao thông Việt Nam
+fliplr: 0.0         # TẮT lật ngang! (Lật ngang sẽ biến "Cấm rẽ trái" -> "Cấm rẽ phải"!)
+flipud: 0.0         # Tắt lật dọc
+mosaic: 1.0         # Ghép 4 ảnh giúp tăng mật độ vật thể nhỏ
+hsv_h: 0.015
+hsv_s: 0.5
+hsv_v: 0.4          # Giả lập ánh sáng ngày/chiều/ngược nắng
+
+project: runs/detect
+name: yolov8s_640_baseline
