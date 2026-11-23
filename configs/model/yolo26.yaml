@@ -12,16 +12,16 @@ fraction: 1.0
 # Ultralytics train arguments. Null values use the installed Ultralytics defaults.
 train_args:
   optimizer: auto
-  # Ultralytics doesn't expose scheduler as a train argument. src/yolo.py
-  # reads this project-specific config and installs ReduceLROnPlateau.
-  # scheduler:
-  #   name: ReduceLROnPlateau
-  #   monitor: metrics/mAP50-95(B)
-  #   mode: max
-  #   factor: 0.1
-  #   patience: 3
-  #   threshold: 0.0001
-  #   min_lr: 0.000001
+  Ultralytics doesn't expose scheduler as a train argument. src/yolo.py
+  reads this project-specific config and installs ReduceLROnPlateau.
+  scheduler:
+    name: ReduceLROnPlateau
+    monitor: metrics/mAP50-95(B)
+    mode: max
+    factor: 0.1
+    patience: 3
+    threshold: 0.0001
+    min_lr: 0.000001
   lr0: 0.01
   lrf: 0.01
   momentum: 0.937
