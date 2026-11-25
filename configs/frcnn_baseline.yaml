@@ -25,7 +25,8 @@ min_size: 626
 max_size: 1622
 
 epochs: 15
-batch_size: 4
+batch_size: 2
+grad_accum: 2           # Effective batch = 4 nhưng an toàn VRAM trên GPU T4 15GB với RoI 14x14
 lr: 0.0002
 backbone_lr_mult: 0.2
 weight_decay: 0.0001

@@ -73,9 +73,12 @@ class FocalRoIHeads(RoIHeads):
         self.use_giou = use_giou
 
     def _compute_custom_loss(self, class_logits, box_regression, proposals, labels, regression_targets):
+        # Ép FP32 cho bước tính loss để tránh tràn số float16 trong BoxCoder.decode_single & GIoU khi bật AMP
+        class_logits = class_logits.float()
+        box_regression = box_regression.float()
         labels_cat = torch.cat(labels, dim=0)
-        reg_cat = torch.cat(regression_targets, dim=0)
-        props_cat = torch.cat(proposals, dim=0)
+        reg_cat = torch.cat(regression_targets, dim=0).float()
+        props_cat = torch.cat(proposals, dim=0).float()
 
         ce = F.cross_entropy(class_logits, labels_cat, reduction="none", label_smoothing=0.02)
         pt = torch.softmax(class_logits, dim=-1).gather(1, labels_cat.unsqueeze(1)).squeeze(1).clamp(1e-6, 1.0 - 1e-6)
@@ -159,9 +162,11 @@ def build_faster_rcnn(
     model.rpn._pre_nms_top_n = {"training": 3000, "testing": 1500}
     model.rpn._post_nms_top_n = {"training": 1500, "testing": 1000}
     model.rpn.fg_iou_thresh = 0.6
+    model.rpn.proposal_matcher.high_threshold = 0.6
     model.roi_heads.detections_per_img = 200
 
     if roi_size > 7 and isinstance(model.roi_heads.box_head, FastRCNNConvFCHead):
+        model.roi_heads.fg_bg_sampler.batch_size_per_image = 256
         model.roi_heads.box_roi_pool = MultiScaleRoIAlign(
             featmap_names=model.roi_heads.box_roi_pool.featmap_names, output_size=roi_size, sampling_ratio=2
         )

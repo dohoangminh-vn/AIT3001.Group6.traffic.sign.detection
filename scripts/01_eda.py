@@ -32,7 +32,7 @@ def _pairwise_intra_ious(anns_list: list) -> tuple[list[float], list[float]]:
 
 
 def main():
-    cfg = load_config(Path("configs/base.yaml"))
+    cfg = load_config(Path("configs/base.yaml"), sys.argv[1:])
     data_dir = Path(cfg["data"]["raw_dir"])
     out_dir = Path("outputs/eda")
     out_dir.mkdir(parents=True, exist_ok=True)

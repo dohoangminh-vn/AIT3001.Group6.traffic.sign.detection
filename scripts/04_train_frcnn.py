@@ -183,10 +183,13 @@ def main():
 
     writer = SummaryWriter(log_dir=str(out_dir / "tb_logs"))
     wb_run = _init_wandb(cfg, out_dir, args.smoke, resume_wandb_id)
+    if wb_run is not None and getattr(wb_run, "url", None):
+        print(f"[W&B] Dashboard: {wb_run.url}")
 
     pred_name = "frcnn_smoke_val.json" if args.smoke else f"{out_dir.name}_val.json"
     out_pred_path = Path("outputs/preds") / pred_name
     warmup_ep = 0 if args.smoke else cfg["warmup_epochs"]
+    grad_accum = 1 if args.smoke else max(1, int(cfg.get("grad_accum", 1)))
     no_improve, last_epoch_ran = 0, start_epoch - 1
 
     for epoch in range(start_epoch, epochs + 1):
@@ -198,18 +201,25 @@ def main():
 
         model.train()
         t0, loss_sums, n_batches = time.time(), {}, 0
-        for images, targets in train_loader:
+        optimizer.zero_grad()
+        total_steps = len(train_loader)
+        for step_idx, (images, targets) in enumerate(train_loader, 1):
             images = [im.to(device) for im in images]
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
-            optimizer.zero_grad()
             with torch.amp.autocast("cuda", enabled=use_amp):
                 loss_dict = model(images, targets)
                 total_loss = sum(loss_dict.values())
-            scaler.scale(total_loss).backward()
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
-            scaler.step(optimizer)
-            scaler.update()
+            if not torch.isfinite(total_loss):
+                print(f"[WARN] Non-finite loss ở ep {epoch} step {step_idx}, bỏ qua batch.")
+                optimizer.zero_grad()
+                continue
+            scaler.scale(total_loss / grad_accum).backward()
+            if step_idx % grad_accum == 0 or step_idx == total_steps:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
             for k, v in loss_dict.items():
                 loss_sums[k] = loss_sums.get(k, 0.0) + float(v.item())
             n_batches += 1

@@ -81,9 +81,15 @@ def main():
     print(f"Làm sạch 2 tầng: trùng cùng lớp={audit['removed_same_cls']}, xung đột khác lớp={audit['removed_cross_cls']}, "
           f"suy biến={audit['removed_degenerate']} -> còn {len(coco['annotations'])} annotations sạch.")
 
-    splits = split_by_street_id(
-        coco, cfg["data"]["n_splits"], cfg["data"]["val_fold"], cfg["data"]["test_fold"], cfg["seed"]
-    )
+    manifest_path = Path(cfg["data"]["split_manifest"])
+    if manifest_path.is_file():
+        saved = json.loads(manifest_path.read_text(encoding="utf-8"))
+        splits = {k: set(v) for k, v in saved["splits"].items()}
+        print(f"Dùng lại split cố định từ {manifest_path} (SHA256={saved.get('sha256', '')[:12]})")
+    else:
+        splits = split_by_street_id(
+            coco, cfg["data"]["n_splits"], cfg["data"]["val_fold"], cfg["data"]["test_fold"], cfg["seed"]
+        )
     img_map = {im["id"]: im for im in coco["images"]}
     anns_by_img = defaultdict(list)
     for a in coco["annotations"]:
@@ -92,7 +98,7 @@ def main():
     streets = {sp: {img_map[i]["street_id"] for i in ids} for sp, ids in splits.items()}
     assert streets["train"].isdisjoint(streets["val"]) and streets["train"].isdisjoint(streets["test"]) and streets["val"].isdisjoint(streets["test"])
 
-    manifest = export_split_manifest(coco, splits, Path(cfg["data"]["split_manifest"]), seed=cfg["seed"])
+    manifest = export_split_manifest(coco, splits, out_dir / "split_street_id.json", seed=cfg["seed"])
     coco_out, yolo_out = Path(cfg["data"]["coco_dir"]), Path(cfg["data"]["yolo_dir"])
     coco_out.mkdir(parents=True, exist_ok=True)
 
@@ -124,7 +130,7 @@ def main():
     yaml_path = yolo_out / "dataset.yaml"
     yaml_path.write_text(yaml.safe_dump({"path": str(yolo_out.resolve()), "train": "images/train", "val": "images/val", "test": "images/test", "names": CLASS_NAMES_ASCII}, sort_keys=False, allow_unicode=True), encoding="utf-8")
     verify_yolo_visual(yolo_out, Path("outputs/ch2_verify_yolo_labels.jpg"))
-    print(f"Manifest chung SHA256={manifest['sha256'][:12]} -> {Path(cfg['data']['split_manifest']).resolve()}")
+    print(f"Manifest chung SHA256={manifest['sha256'][:12]} -> {(out_dir / 'split_street_id.json').resolve()}")
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ data:
   processed_dir: data/processed
   coco_dir: data/processed/coco
   yolo_dir: data/processed/yolo
-  split_manifest: data/processed/split_street_id.json
+  split_manifest: configs/split_street_id.json
   dedup_iou: 0.85
   conflict_iou: 0.90
   min_box_side: 2.0
@@ -21,8 +21,8 @@ eval:
   iou_match: 0.50
 
 tracking:
-  wandb_project: Traffic Sign
-  wandb_entity: null
+  wandb_project: Traffic_sign_vietnam
+  wandb_entity: dom587316-vnu
   wandb_mode: online      # online | offline | disabled
   tensorboard: true
   checkpoint_every: 3

@@ -94,6 +94,17 @@ def test_custom_frcnn_cb_focal_giou_and_roi14():
         preds = model(imgs[:1])
     assert len(preds) == 1 and "boxes" in preds[0]
 
+    # Giả lập float16 AMP trên tọa độ ảnh thật 1622x626 (tránh tràn area > 65504 trong BoxCoder/GIoU)
+    logits_fp16 = torch.randn(16, 8, dtype=torch.float16, requires_grad=True)
+    reg_fp16 = torch.randn(16, 32, dtype=torch.float16, requires_grad=True)
+    props_full = [torch.tensor([[100.0, 100.0, 1500.0, 550.0]] * 16, dtype=torch.float32)]
+    lbls_full = [torch.randint(0, 8, (16,), dtype=torch.int64)]
+    reg_t_full = [torch.randn(16, 4, dtype=torch.float32)]
+    lc, lb = model.roi_heads._compute_custom_loss(logits_fp16, reg_fp16, props_full, lbls_full, reg_t_full)
+    assert torch.isfinite(lc) and torch.isfinite(lb)
+    (lc + lb).backward()
+    assert torch.isfinite(logits_fp16.grad).all() and torch.isfinite(reg_fp16.grad).all()
+
 
 def test_analyze_detection_errors_4way():
     gt = {
