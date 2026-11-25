@@ -1,0 +1,29 @@
+backend: fasterrcnn
+weights: COCO_V1
+imgsz: ${data.image_size}
+batch_size: 4
+epochs: 75
+patience: 10
+device: 0
+amp: true
+workers: 2
+optimizer:
+  name: AdamW
+  lr: 0.0001
+  weight_decay: 0.0001
+scheduler:
+  warmup_epochs: 3
+  warmup_start_factor: 0.1
+  cosine_epochs: 72
+  eta_min: 0.000001
+augmentation:
+  color_jitter:
+    brightness: 0.1
+    contrast: 0.1
+    saturation: 0.1
+    hue: 0.02
+  affine:
+    degrees: 5.0
+    translate: [0.02, 0.02]
+    scale: [0.9, 1.1]
+  horizontal_flip_probability: 0.0

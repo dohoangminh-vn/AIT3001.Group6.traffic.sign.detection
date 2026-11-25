@@ -1,14 +1,38 @@
 """Ultralytics backend with resumable W&B checkpoints."""
 
 import json
+import hashlib
 import shutil
-from datetime import datetime
 from pathlib import Path
-from uuid import uuid4
 
 from omegaconf import OmegaConf
 
 from src.data import prepare
+from src.run_naming import make_run_name
+
+
+ULTRALYTICS_AUGMENTATION_KEYS = (
+    "hsv_h", "hsv_s", "hsv_v", "degrees", "translate", "scale", "shear",
+    "perspective", "flipud", "fliplr", "mosaic", "mixup", "cutmix",
+    "copy_paste", "bgr", "multi_scale",
+)
+
+
+def configured_train_args(cfg):
+    """Merge model-native augmentation knobs behind the shared enable switch."""
+    train_args = OmegaConf.to_container(cfg.model.train_args, resolve=True)
+    train_args = {key: value for key, value in train_args.items() if value is not None}
+    if cfg.augmentation.enabled:
+        model_augmentation = OmegaConf.select(cfg, "model.augmentation")
+        if model_augmentation is not None:
+            train_args.update(OmegaConf.to_container(model_augmentation, resolve=True))
+    else:
+        train_args.update({key: 0.0 for key in ULTRALYTICS_AUGMENTATION_KEYS})
+        train_args["close_mosaic"] = 0
+        # None lets Ultralytics install its default Blur/MedianBlur/ToGray/CLAHE.
+        # An empty list disables this Albumentations branch entirely.
+        train_args["augmentations"] = []
+    return train_args
 
 
 def resolve_resume(reference, output):
@@ -72,6 +96,11 @@ def checkpoint_callback(run, info, every, online):
 
 
 def train(cfg):
+    from src.small_object_metrics import validate_evaluation_config
+
+    validate_evaluation_config(
+        cfg.evaluation.inference, cfg.evaluation.small_object_area_cutoffs_px2
+    )
     if cfg.tracking.mode not in ("online", "offline"):
         raise ValueError("tracking.mode must be online or offline")
     every = int(cfg.tracking.checkpoint_every)
@@ -91,13 +120,22 @@ def train(cfg):
                      "clearml": False, "dvc": False})
     output = Path(cfg.output_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
-    name = f"yolo26-{datetime.now():%Y%m%d-%H%M%S}-{uuid4().hex[:6]}"
+    name = make_run_name(cfg.tracking.name, default_prefix=Path(cfg.model.weights).stem)
     save_dir = output / name
     checkpoint, previous = resolve_resume(str(cfg.resume), output / "downloads" / name) if cfg.resume else (None, None)
     data_yaml = prepare(cfg.data.root, cfg.data.prepared_dir, cfg.seed, cfg.data.val_fraction)
-    preparation = json.loads((data_yaml.parent / "split.json").read_text(encoding="utf-8"))["preparation"]
+    prepared_dir = Path(cfg.data.prepared_dir).resolve()
+    preparation = json.loads((prepared_dir / "split.json").read_text(encoding="utf-8"))["preparation"]
     # Compare dataset/split identity, allowing its mount path to change between sessions.
-    data_key = {k: preparation[k] for k in ("csv_sha256", "seed", "val_fraction")}
+    data_key = {k: preparation[k] for k in
+                ("csv_sha256", "seed", "val_fraction", "split_policy")}
+    validation_ids = json.loads((prepared_dir / "split.json").read_text(encoding="utf-8"))["splits"]["val"]
+    data_key["validation_split_sha256"] = hashlib.sha256(
+        json.dumps(validation_ids, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    preprocess_manifest = {"online": True, "library": "ultralytics", "size": int(cfg.model.imgsz),
+                           "letterbox": "Ultralytics dataset LetterBox"}
+    data_key["preprocess_signature"] = preprocess_manifest
     if previous and previous["data"] != data_key:
         raise ValueError("Resume dataset or split differs from the checkpoint")
     model = YOLO(str(checkpoint) if checkpoint else cfg.model.weights)
@@ -107,6 +145,10 @@ def train(cfg):
         raise ValueError("Resume also needs sibling best.pt to preserve the previous best model")
 
     save_dir.mkdir(parents=True, exist_ok=False)
+    resolved_config = OmegaConf.to_container(cfg, resolve=True)
+    (save_dir / "resolved_config.yaml").write_text(
+        OmegaConf.to_yaml(cfg, resolve=True), encoding="utf-8"
+    )
     with wandb.init(project=previous["project"] if previous else cfg.tracking.project,
                     entity=previous["entity"] if previous else cfg.tracking.entity,
                     id=previous["run_id"] if previous else None,
@@ -117,6 +159,15 @@ def train(cfg):
             run.define_metric(f"{prefix}/*", step_metric="epoch")
         info = {"run_id": run.id, "entity": run.entity, "project": run.project,
                 "name": run.name, "data": data_key}
+        run.config.update({
+            "backend": cfg.model.backend,
+            "weights": cfg.model.weights,
+            "preprocess": preprocess_manifest,
+            "augmentation_enabled": bool(cfg.augmentation.enabled),
+            "resolved_config": resolved_config,
+            "torch_version": __import__("torch").__version__,
+            "torchvision_version": __import__("torchvision").__version__,
+        }, allow_val_change=True)
 
         def setup(trainer):
             (trainer.wdir / "run.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
@@ -128,12 +179,18 @@ def train(cfg):
                                                                cfg.tracking.mode == "online"))
         args = dict(data=str(data_yaml), batch=cfg.model.batch_size, imgsz=cfg.model.imgsz,
                     device=device, workers=cfg.model.workers, save_dir=str(save_dir),
-                    save_period=-1)
+                    save_period=-1,
+                    conf=float(cfg.evaluation.inference.score_threshold),
+                    iou=float(cfg.evaluation.inference.nms_iou),
+                    max_det=int(cfg.evaluation.inference.max_detections))
         if checkpoint:
             # Keep original optimizer, epoch budget and training recipe on resume.
             model.train(resume=True, **args)
         else:
-            train_args = OmegaConf.to_container(cfg.model.train_args, resolve=True)
+            train_args = configured_train_args(cfg)
+            # Keep shared evaluator thresholds authoritative across backends.
+            for key in ("conf", "iou", "max_det"):
+                train_args.pop(key, None)
             scheduler_cfg = train_args.pop("scheduler", None)
             if scheduler_cfg:
                 import torch
@@ -161,5 +218,25 @@ def train(cfg):
                         amp=cfg.model.amp, seed=cfg.seed, deterministic=True,
                         fraction=cfg.model.fraction, cache=False, save=True,
                         project=str(output), name=name, **args, **train_args)
+        try:
+            from src.small_object_metrics import evaluate_small_objects
+
+            small_metrics = evaluate_small_objects(
+                checkpoint=model.trainer.best,
+                data_root=cfg.data.root,
+                prepared_dir=cfg.data.prepared_dir,
+                output_csv=save_dir / "small_object_metrics.csv",
+                run=run,
+                imgsz=cfg.model.imgsz,
+                batch=cfg.model.batch_size,
+                device=device,
+                workers=cfg.model.workers,
+                inference_cfg=OmegaConf.to_container(cfg.evaluation.inference, resolve=True),
+                area_cutoffs=cfg.evaluation.small_object_area_cutoffs_px2,
+            )
+            print(f"Small-object metrics: {save_dir / 'small_object_metrics.csv'} ({len(small_metrics)} area cutoffs)")
+        except Exception as error:
+            # Keep trained weights and standard metrics when optional area evaluation fails.
+            print(f"Warning: small-object evaluation failed; no custom metrics were logged: {error}")
         print(f"Best weights: {model.trainer.best}")
         print(f"W&B checkpoint: {run.entity}/{run.project}/run_{run.id}_checkpoint:latest")

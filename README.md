@@ -1,12 +1,17 @@
-# Traffic sign detection — YOLO26 baseline
+# Traffic sign detection — YOLOv8s and Faster R-CNN baselines
 
-Repo train tối giản cho ZA Traffic 2020: Hydra quản lý cấu hình, Ultralytics quản lý vòng lặp train, W&B lưu metrics và checkpoints. Python 3.10–3.13; các lệnh bên dưới chạy từ thư mục repo.
+The YOLOv8s baseline uses online 640×640 aspect-preserving letterbox resizing (Ultralytics loader); Faster R-CNN uses the same geometry through Albumentations. No resized dataset is written. Augmentation is disabled by default and, when enabled, is applied only to the training split. Run the Kaggle workflow in [notebooks/kaggle_pipeline.ipynb](notebooks/kaggle_pipeline.ipynb). The YOLO26 recipe remains available with `model=yolo26`.
+
+Repo huấn luyện và so sánh YOLOv8s với Faster R-CNN trên ZA Traffic 2020: Hydra quản lý cấu hình, mỗi backend quản lý vòng lặp train, W&B lưu metrics và checkpoints. Python 3.10–3.13; các lệnh bên dưới chạy từ thư mục repo.
 
 ```text
 configs/config.yaml          # data, seed, output, W&B
-configs/model/yolo26.yaml    # model và tham số train
-src/data.py                 # đọc CSV, split theo ảnh, chuyển nhãn
+configs/model/yolov8.yaml    # YOLOv8s baseline
+configs/model/fasterrcnn.yaml # Faster R-CNN v2 baseline
+src/data.py                 # đọc CSV, split theo street, chuyển nhãn
+src/preprocess.py            # phép biến đổi online và đổi tọa độ bbox
 src/yolo.py                 # Ultralytics + checkpoint/resume
+src/fasterrcnn.py            # Torchvision Faster R-CNN training
 train.py                    # entrypoint Hydra
 tests/                      # kiểm tra dữ liệu và artifact packaging
 ```
@@ -24,13 +29,15 @@ Upload dataset lên Kaggle với cấu trúc (đường dẫn mount thực tế 
     images/*.png
 ```
 
-CSV là nguồn annotation duy nhất. Có 4.500 ảnh, 11.000 box, 7 lớp. Chia ngẫu nhiên theo **image ID**, 3.600 train / 900 validation, seed 42; không nhóm theo `street_id`. Mọi box của một ảnh cùng tập. Public test không có nhãn nên không tính mAP.
+CSV là nguồn annotation duy nhất. Có 4.500 ảnh, 11.000 dòng annotation gốc, 7 lớp và 38 `street_id`. Split train/validation theo nhóm street với seed 42; toàn bộ ảnh của một street ở cùng một tập. `data.val_fraction=0.2` là mục tiêu gần đúng theo số ảnh, đồng thời thuật toán cân bằng tỷ lệ bbox mỗi class. Do street không bị chia nhỏ và có kích thước khác nhau, validation không nhất thiết đúng 20%. Số street, ảnh, tỷ lệ thực tế và bbox theo class được ghi trong `split.json`. Public test không có nhãn nên không tính mAP.
 
-Ảnh gốc được giữ nguyên, không crop hoặc resize trước. Ultralytics tự resize/padding và áp dụng augmentation mặc định trong lúc train. Nhãn COCO `[x,y,w,h]` đổi sang YOLO normalized; category `1–7` đổi thành `0–6`.
+Khi prepare, annotation trùng chính xác trên cùng ảnh (cùng class và cùng tọa độ `[x,y,w,h]`) chỉ giữ một dòng trong label YOLO. CSV nguồn không bị sửa. Cùng bbox nhưng khác class được giữ để tránh tự ý xóa nhãn xung đột; số trường hợp này và số duplicate đã loại được ghi trong `split.json`. Prepared data cũ không được tái sử dụng nếu dedup policy hoặc split policy thay đổi; thư mục mặc định hiện tại là `data/za_traffic_yolo_street/`.
 
-Lần chạy đầu tạo `data/za_traffic_yolo/` gồm ảnh symlink, labels, `data.yaml`, `split.json` (image IDs) và `train.txt`/`val.txt` (tên ảnh tương đối với thư mục ảnh gốc). Các lần sau tái sử dụng. Kaggle hỗ trợ symlink; Windows thiếu quyền symlink sẽ copy ảnh và báo cảnh báo. Không ghi vào dữ liệu nguồn.
+Ảnh gốc được giữ nguyên. YOLO resize/pad online qua loader Ultralytics; Faster R-CNN dùng Albumentations online. Cả hai giữ tỉ lệ và đệm giữa khung 640×640. Augmentation mặc định tắt; nếu bật, chỉ dataset train nhận augmentation. YOLO xử lý chuẩn hóa đầu vào trong framework, còn Faster R-CNN dùng chuẩn hóa riêng của torchvision.
 
-Đổi CSV, seed hoặc tỷ lệ split thì chọn `data.prepared_dir` mới. Nếu quá trình chuẩn bị bị ngắt, xóa riêng thư mục prepared chưa hoàn tất rồi chạy lại. Muốn chỉ chuẩn bị dữ liệu:
+Lần chạy đầu tạo `data/za_traffic_yolo_street/` gồm ảnh symlink, labels, `data.yaml`, `split.json` (image IDs và street IDs) và `train.txt`/`val.txt` (tên ảnh tương đối với thư mục ảnh gốc). Các lần sau tái sử dụng. Kaggle hỗ trợ symlink; Windows thiếu quyền symlink sẽ copy ảnh và báo cảnh báo. Không ghi vào dữ liệu nguồn.
+
+Đổi CSV, seed, tỷ lệ split hoặc split policy thì chọn `data.prepared_dir` mới. Split theo street không tương thích prepared data cũ chia theo ảnh; mặc định mới dùng `data/za_traffic_yolo_street/`. Nếu quá trình chuẩn bị bị ngắt, xóa riêng thư mục prepared chưa hoàn tất rồi chạy lại. Muốn chỉ chuẩn bị dữ liệu:
 
 ```bash
 python train.py prepare_only=true data.root=archive/za_traffic_2020
@@ -62,9 +69,9 @@ os.environ["WANDB_API_KEY"] = UserSecretsClient().get_secret("WANDB_API_KEY")
 
 Không in API key hoặc ghi key vào config/Git.
 
-**3. Smoke test trước**
+**3. Smoke test YOLO trước**
 
-Sửa `data.root` theo mount thật. Lệnh này train khoảng 2% tập train trong 2 epoch; validation vẫn dùng đủ 900 ảnh. Dùng checkpoint mỗi epoch để kiểm tra upload:
+Sửa `data.root` theo mount thật. Lệnh này train YOLO trên khoảng 2% tập train trong 2 epoch; validation vẫn dùng toàn bộ validation. Dùng checkpoint mỗi epoch để kiểm tra upload:
 
 ```python
 !python train.py data.root=/kaggle/input/<dataset>/za_traffic_2020 model.epochs=2 model.fraction=0.02 tracking.checkpoint_every=1
@@ -76,41 +83,33 @@ Sửa `data.root` theo mount thật. Lệnh này train khoảng 2% tập train t
 !python train.py data.root=/kaggle/input/<dataset>/za_traffic_2020
 ```
 
-Mặc định: pretrained `yolo26s.pt`, `imgsz=640`, batch 4, 50 epoch, patience 10, AMP bật, workers 2, seed 42 và dùng toàn bộ dữ liệu train. Giữ optimizer/augmentation mặc định của Ultralytics 8.4.204. Nếu OOM, thử `model.batch_size=2` trước khi giảm `model.imgsz=512`. Một lần train mới tạo thư mục riêng trong `outputs/`.
+Mặc định train pretrained `yolov8s.pt`, 640×640, batch 4, tối đa 50 epoch, patience 10, AMP bật, workers 2, seed 42 và dùng toàn bộ dữ liệu train. Chọn Faster R-CNN bằng `model=fasterrcnn`; model này dùng AdamW cùng Linear Warmup và CosineAnnealingLR. Notebook Kaggle có lệnh chạy đầy đủ. Nếu OOM, giảm batch riêng theo model. Mỗi run tạo thư mục riêng trong `outputs/`.
 
-Hydra cho phép override trực tiếp cả các tham số train của Ultralytics. Các tham số trong `model.train_args` mặc định theo recipe Ultralytics; dùng `null` để bỏ truyền một tham số và dùng giá trị mặc định của phiên bản thư viện:
-
-Scheduler có thể cấu hình riêng bằng `model.train_args.scheduler` (không truyền trực tiếp khóa này vào Ultralytics). Ví dụ mặc định dùng `ReduceLROnPlateau`, theo dõi mAP50-95 của validation, giảm LR theo `factor` sau `patience` epoch không cải thiện và dừng giảm tại `min_lr`.
+Đặt nhãn dễ nhớ cho run mới bằng `tracking.name`; pipeline tự nối timestamp và mã ngắn để phân biệt các lần chạy cùng nhãn. Tên này được dùng cho W&B run và thư mục output. Ví dụ:
 
 ```bash
-python train.py model=yolo26 model.batch_size=2 model.imgsz=640
+python train.py tracking.name=baseline-yolov8s
+python train.py model=fasterrcnn tracking.name=baseline-fasterrcnn
+python train.py augmentation.enabled=true model.augmentation.fliplr=0.25
+python train.py evaluation.inference.score_threshold=0.005 evaluation.inference.nms_iou=0.65
+```
+
+Để `tracking.name=null` (mặc định), run tự tạo tên dựa trên model, timestamp và mã ngắn.
+
+Các tham số train của YOLO vẫn có thể override trực tiếp bằng Hydra. Tham số ảnh chung nằm trong `data`, ngưỡng đánh giá trong `evaluation`, và công tắc augmentation trong `augmentation.enabled`. Mỗi run lưu cấu hình đã resolve để tái lập.
+
+```bash
+python train.py model=yolov8 model.batch_size=2 data.image_size=640
 python train.py model.train_args.optimizer=AdamW model.train_args.lr0=0.001 model.train_args.lrf=0.01
-python train.py model.train_args.cos_lr=true model.train_args.warmup_epochs=5 model.train_args.weight_decay=0.0001
-python train.py model.train_args.mosaic=0.5 model.train_args.fliplr=0.25
+python train.py model.augmentation.mosaic=0.5 model.augmentation.fliplr=0.25 augmentation.enabled=true
+python train.py model=fasterrcnn model.optimizer.lr=0.00005 model.scheduler.warmup_epochs=5
 python train.py tracking.project=my-traffic-project tracking.entity=my-team
 python train.py --cfg job
 ```
 
 Có thể cấu hình thêm các giá trị Ultralytics như `momentum`, `warmup_bias_lr`, `close_mosaic`, `hsv_h`, `degrees`, `translate`, `scale`, `shear`, `perspective`, `flipud`, `mixup` và `copy_paste` theo cùng cú pháp `model.train_args.<tên>=<giá_trị>`. Xem `configs/model/yolo26.yaml` để biết danh sách mặc định đang được truyền vào train mới.
 
-### Thử nghiệm tiling
-
-Ultralytics 8.4.204 hỗ trợ tham số `tile` trong train, validation và predict. Bắt đầu với hai run có cùng seed và hyperparameter; chỉ khác `tile`:
-
-```bash
-python train.py model.fraction=1.0 model.train_args.tile=false
-python train.py model.fraction=1.0 model.train_args.tile=640
-```
-
-Trên ảnh ZA Traffic 2020 kích thước 1622×626, `tile=640` chia ảnh thành các cửa sổ có overlap 20%. Ultralytics clip nhãn ở biên tile và giữ cả cửa sổ không có object làm ví dụ âm; validation ghép prediction về ảnh gốc trước khi tính metric. Tiling chạy nhiều lượt model hơn nên sẽ tốn thời gian hơn.
-
-Để diagnostics dùng đúng chế độ của run, truyền cùng override `model.train_args.tile`:
-
-```bash
-python diagnose.py diagnostic.checkpoint=outputs/<run>/weights/best.pt data.root=/path/to/za_traffic_2020 model.train_args.tile=640
-```
-
-`diagnostic.tile` lấy giá trị từ `model.train_args.tile`; báo cáo ghi lại tile size đã dùng. Tham số `tile` trong train args cũng có thể đặt `false` để chạy baseline không tiling.
+Baseline mới resize online, giữ tỉ lệ và đệm giữa khung 640×640. YOLO dùng loader Ultralytics; Faster R-CNN dùng Albumentations.
 
 ## Xem lỗi dự đoán
 
@@ -127,6 +126,8 @@ python diagnose.py "diagnostic.checkpoint=wandb://<entity>/<project>/run_<run_id
 ```
 
 Mặc định confidence là `0.25`, ngưỡng IoU để ghép prediction với nhãn là `0.5`; có thể đổi bằng `diagnostic.conf=...` và `diagnostic.match_iou=...`. `match_iou` dùng để phân loại lỗi trong báo cáo, không thay đổi ngưỡng NMS của YOLO và không phải phép tính mAP.
+
+Sau khi train xong, pipeline dùng `best.pt` để đánh giá một lượt trên validation theo diện tích bbox gốc `<128`, `<256`, `<512` và `<1024 px²`. Kết quả AP@0.5, AP@0.5:0.95 cùng số bbox/ảnh validation được ghi vào `outputs/<run>/small_object_metrics.csv` và log vào cùng W&B run dưới `small_eval/`. Các metric này bổ sung cho mAP tổng thể theo epoch. Evaluator dùng COCO area filtering; cần `pycocotools` theo `requirements.txt`.
 
 Batch inference mặc định dùng cùng `model.batch_size` của cấu hình train (hiện là 4), đồng thời bật FP16 half-precision trên GPU để giảm VRAM. Nếu diagnostics thiếu VRAM, giảm riêng batch bằng `diagnostic.batch_size=1` hoặc `diagnostic.batch_size=2`; có thể tắt half precision bằng `diagnostic.amp=false` để đối chiếu kết quả. Trên CPU, FP16 tự tắt.
 

@@ -1,6 +1,6 @@
 backend: yolo
 weights: yolo26s.pt
-imgsz: 640
+imgsz: ${data.image_size}
 batch_size: 4
 epochs: 75
 patience: 10
@@ -12,14 +12,6 @@ fraction: 1.0
 # Ultralytics train arguments. Null values use the installed Ultralytics defaults.
 train_args:
   optimizer: auto
-  # scheduler:
-  #   name: ReduceLROnPlateau
-  #   monitor: metrics/mAP50-95(B)
-  #   mode: max
-  #   factor: 0.1
-  #   patience: 3
-  #   threshold: 0.0001
-  #   min_lr: 0.000001
   lr0: 0.01
   lrf: 0.01
   momentum: 0.937
@@ -28,18 +20,20 @@ train_args:
   warmup_momentum: 0.8
   warmup_bias_lr: 0.1
   cos_lr: false
-  close_mosaic: 10
-  hsv_h: 0.015
-  hsv_s: 0.7
-  hsv_v: 0.4
-  degrees: 0.0
-  translate: 0.1
-  scale: 0.5
-  shear: 0.0
-  perspective: 0.0
-  flipud: 0.0
-  fliplr: 0.5
-  mosaic: 1.0
-  mixup: 0.0
-  copy_paste: 0.0
-  tile: false
+
+  augmentation:
+    close_mosaic: 10
+    hsv_h: 0.015
+    hsv_s: 0.7
+    hsv_v: 0.4
+    degrees: 0.0
+    translate: 0.1
+    scale: 0.5
+    shear: 0.0
+    perspective: 0.0
+    flipud: 0.0
+    fliplr: 0.5
+    mosaic: 1.0
+    mixup: 0.0
+    copy_paste: 0.0
+    tile: false

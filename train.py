@@ -1,4 +1,4 @@
-"""Single entrypoint: python train.py model=yolo26 model.batch_size=4."""
+"""Single entrypoint: python train.py model=yolov8 model.batch_size=4."""
 
 import hydra
 from omegaconf import DictConfig
@@ -12,6 +12,10 @@ def main(cfg: DictConfig) -> None:
         print(prepare(cfg.data.root, cfg.data.prepared_dir, cfg.seed, cfg.data.val_fraction))
     elif cfg.model.backend == "yolo":
         from src.yolo import train
+
+        train(cfg)
+    elif cfg.model.backend == "fasterrcnn":
+        from src.fasterrcnn import train
 
         train(cfg)
     else:
