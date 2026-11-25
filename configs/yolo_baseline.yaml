@@ -1,13 +1,14 @@
-# Cấu hình huấn luyện Baseline 1: YOLOv8 (có thể đổi model thành yolo26s.pt)
+# Cấu hình huấn luyện YOLO (kế thừa configs/base.yaml; có thể đổi model sang yolo26s.pt)
+_base_: base.yaml
+
 model: yolov8s.pt
-data: data/processed/yolo/dataset.yaml
+data_yaml: data/processed/yolo/dataset.yaml
 
 epochs: 50
 imgsz: 640          # Baseline: 640 | Ablation biển báo nhỏ: 1280
 batch: 16
 lr0: 0.01
 optimizer: auto
-seed: 42
 workers: 4
 
 # Augmentation phù hợp biển báo giao thông Việt Nam

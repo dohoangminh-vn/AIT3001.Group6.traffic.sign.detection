@@ -1,0 +1,29 @@
+# Cấu hình gốc dùng chung toàn nhóm (Data, Split, Eval, Tracking)
+seed: 42
+
+data:
+  raw_dir: data/za_traffic_2020/traffic_train
+  public_test_dir: data/za_traffic_2020/traffic_public_test
+  processed_dir: data/processed
+  coco_dir: data/processed/coco
+  yolo_dir: data/processed/yolo
+  split_manifest: data/processed/split_street_id.json
+  dedup_iou: 0.85
+  conflict_iou: 0.90
+  min_box_side: 2.0
+  n_splits: 6
+  val_fold: 4
+  test_fold: 5
+
+eval:
+  conf_export: 0.001
+  diag_conf: 0.25
+  iou_match: 0.50
+
+tracking:
+  wandb_project: Traffic Sign
+  wandb_entity: null
+  wandb_mode: online      # online | offline | disabled
+  tensorboard: true
+  checkpoint_every: 3
+
