@@ -1,18 +1,36 @@
-# Cấu hình Baseline 2: Faster R-CNN ResNet50-FPN-v2 (Two-Stage)
+# Cấu hình Faster R-CNN (kế thừa configs/base.yaml). Chạy các mốc F0..F5 bằng CLI override:
+# F0 (Default):  python scripts/04_train_frcnn.py anchor_mode=default roi_size=7 loss_type=ce scheduler=cosine out_dir=runs/frcnn/f0_default
+# F1 (SmallAR):  python scripts/04_train_frcnn.py anchor_mode=small_sign_ar roi_size=7 loss_type=ce scheduler=cosine out_dir=runs/frcnn/f1_small_ar
+# F2 (Plateau):  python scripts/04_train_frcnn.py anchor_mode=small_sign_ar roi_size=7 loss_type=ce scheduler=plateau out_dir=runs/frcnn/f2_plateau
+# F3 (CB+RoI14): python scripts/04_train_frcnn.py
+# F5 (Tiled640): python scripts/04_train_frcnn.py tiled=true copy_paste=true min_size=800 max_size=800 out_dir=runs/frcnn/f5_tiled640
+_base_: base.yaml
+
 train_json: data/processed/coco/train.json
 val_json: data/processed/coco/val.json
 img_dir: data/za_traffic_2020/traffic_train/images
 
 num_classes: 8          # 0: background + 7 lớp biển báo (1..7)
-small_anchors: true     # true: (8,16,32,64,128) cho biển nhỏ | false: mặc định (32..512) để làm Ablation!
-min_size: 626           # Giữ nguyên độ phân giải gốc 1622x626 trên GPU
+backbone: resnet50      # resnet50 | mobilenet_v3
+anchor_mode: small_sign_ar  # default | small | small_sign_ar
+roi_size: 14            # 7 | 14 (nâng lưới RoIAlign giữ nét ruột biển báo)
+loss_type: cb_focal     # ce | cb_focal
+focal_gamma: 2.0
+use_giou: true
+
+tiled: false
+neg_tile_ratio: 0.15
+copy_paste: false
+min_size: 626
 max_size: 1622
 
 epochs: 15
 batch_size: 4
 lr: 0.0002
+backbone_lr_mult: 0.2
 weight_decay: 0.0001
+warmup_epochs: 2
+scheduler: plateau      # plateau | cosine
+patience: 5
 num_workers: 2
-seed: 42
-
-out_dir: runs/frcnn/frcnn_small_anchors
+out_dir: runs/frcnn/f3_focal_roi14
