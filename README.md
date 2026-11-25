@@ -113,6 +113,14 @@ Baseline mới resize online, giữ tỉ lệ và đệm giữa khung 640×640. 
 
 ## Xem lỗi dự đoán
 
+Tune ngưỡng inference trên validation theo tên run W&B chính xác. Mặc định tune NMS IoU theo mAP@0.5:0.95 rồi tune confidence theo F1; chỉ ghi CSV kết quả và `best_thresholds.json` vào `outputs/tuning/`:
+
+```bash
+python tune.py tuning.run_name=<exact-wandb-run-name> data.root=/path/to/za_traffic_2020
+```
+
+Có thể chọn riêng ngưỡng/metric, ví dụ `tuning.thresholds=[conf] tuning.conf.metric=recall`. Metric hỗ trợ `map50_95`, `map50`, `f1`, `precision`, `recall`. mAP dùng confidence `0.001`; precision/recall/F1 dùng confidence cố định khi tune NMS. Diagnostics chạy riêng sau đó bằng các ngưỡng đã chọn.
+
 Sau khi train, chạy chẩn đoán trên toàn bộ validation set để xem trực quan các ảnh có lỗi. Dùng `best.pt` của run:
 
 ```bash
