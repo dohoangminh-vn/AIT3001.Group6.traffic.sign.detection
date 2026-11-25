@@ -21,8 +21,8 @@ eval:
   iou_match: 0.50
 
 tracking:
-  wandb_project: Traffic_sign_vietnam
-  wandb_entity: dom587316-vnu
+  wandb_project: Traffic Sign
+  wandb_entity: ducholmes-vietnam-national-university-hanoi
   wandb_mode: online      # online | offline | disabled
   tensorboard: true
   checkpoint_every: 3
