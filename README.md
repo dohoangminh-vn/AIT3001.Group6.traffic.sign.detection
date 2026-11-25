@@ -42,7 +42,7 @@ python scripts/04_train_frcnn.py anchor_mode=default roi_size=7 loss_type=ce sch
 python scripts/04_train_frcnn.py anchor_mode=small_sign_ar roi_size=7 loss_type=ce scheduler=cosine out_dir=runs/frcnn/f1_small_ar
 python scripts/04_train_frcnn.py anchor_mode=small_sign_ar roi_size=7 loss_type=ce scheduler=plateau out_dir=runs/frcnn/f2_plateau
 python scripts/04_train_frcnn.py
-python scripts/04_train_frcnn.py tiled=true copy_paste=true min_size=800 max_size=800 out_dir=runs/frcnn/f5_tiled640
+python scripts/04_train_frcnn.py tiled=true copy_paste=true min_size=800 max_size=2048 out_dir=runs/frcnn/f5_tiled640
 
 # Batch-4 SAHI, Đánh giá pycocotools, Grad-CAM & Video Demo
 python scripts/06_infer_sahi_demo.py weights=runs/frcnn/f3_focal_roi14/best.pth

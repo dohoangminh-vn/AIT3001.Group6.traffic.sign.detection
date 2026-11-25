@@ -25,7 +25,13 @@ def run_batch4_sahi(model, img_np: np.ndarray, device: torch.device, tile_size: 
     tiles = [crop_tile(img_np, empty_b, empty_l, x0, tile_size)[0] for x0 in offsets]
 
     batch = [to_tensor(img_np).to(device)] + [to_tensor(t).to(device) for t in tiles]
-    outputs = model(batch)
+    use_amp = device.type == "cuda"
+    if use_amp:
+        torch.cuda.synchronize()
+    with torch.amp.autocast("cuda", enabled=use_amp):
+        outputs = model(batch)
+    if use_amp:
+        torch.cuda.synchronize()
     full_out = outputs[0]
 
     all_b, all_s, all_l = [full_out["boxes"].cpu()], [full_out["scores"].cpu()], [full_out["labels"].cpu()]
@@ -43,8 +49,9 @@ def run_batch4_sahi(model, img_np: np.ndarray, device: torch.device, tile_size: 
 
 
 def main():
+    default_cfg = Path("configs/frcnn_baseline.yaml")
     parser = argparse.ArgumentParser(description="Suy luận Batch-4 SAHI 640x640 cho Faster R-CNN")
-    parser.add_argument("--config", type=Path, default=Path("configs/frcnn_baseline.yaml"))
+    parser.add_argument("--config", type=Path, default=default_cfg)
     parser.add_argument("--weights", type=Path, default=None)
     parser.add_argument("--val-json", type=Path, default=None)
     parser.add_argument("--img-dir", type=Path, default=None)
@@ -54,9 +61,13 @@ def main():
     parser.add_argument("opts", nargs="*")
     args = parser.parse_intermixed_args()
 
-    cfg = load_config(args.config, args.opts)
+    cfg_pre = load_config(args.config, args.opts)
+    weights_path = args.weights or (Path(cfg_pre["weights"]) if cfg_pre.get("weights") else Path("runs/frcnn/frcnn_smoke/best.pth" if args.smoke else f"{cfg_pre['out_dir']}/best.pth"))
+    resolved_cfg = weights_path.parent / "resolved_config.yaml"
+    cfg = load_config(resolved_cfg, args.opts) if (args.config == default_cfg and resolved_cfg.is_file()) else cfg_pre
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    weights_path = args.weights or Path("runs/frcnn/frcnn_smoke/best.pth" if args.smoke else f"{cfg['out_dir']}/best.pth")
+    use_amp = device.type == "cuda"
     val_json = args.val_json or Path(cfg["val_json"])
     img_dir = args.img_dir or Path(cfg["img_dir"])
 
@@ -79,10 +90,14 @@ def main():
     sahi_preds, t_full, t_sahi = [], 0.0, 0.0
     vis_sample = None
 
-    for idx, im in enumerate(images):
+    for im in images:
         img_np = np.array(Image.open(img_dir / im["file_name"]).convert("RGB"))
+        full_in = [to_tensor(img_np).to(device)]
+        if use_amp: torch.cuda.synchronize()
         t0 = time.perf_counter()
-        _ = model([to_tensor(img_np).to(device)])[0]
+        with torch.no_grad(), torch.amp.autocast("cuda", enabled=use_amp):
+            _ = model(full_in)[0]
+        if use_amp: torch.cuda.synchronize()
         t_full += time.perf_counter() - t0
 
         t1 = time.perf_counter()
@@ -99,13 +114,19 @@ def main():
         if vis_sample is None or len(anns_by_img.get(im["id"], [])) >= 3:
             vis_sample = (im, img_np, anns_by_img.get(im["id"], []), full_out, sahi_out)
 
-    out_pred = args.out_pred or Path("outputs/preds") / ("frcnn_smoke_sahi_val.json" if args.smoke else f"{Path(cfg['out_dir']).name}_sahi_val.json")
+    exp_name = weights_path.parent.name if weights_path.parent.name not in (".", "") else Path(cfg["out_dir"]).name
+    out_pred = args.out_pred or Path("outputs/preds") / ("frcnn_smoke_sahi_val.json" if args.smoke else f"{exp_name}_sahi_val.json")
     out_pred.parent.mkdir(parents=True, exist_ok=True)
     out_pred.write_text(json.dumps(sahi_preds), encoding="utf-8")
 
     n = max(1, len(images))
-    print(f"Full-frame: {len(images)/max(1e-6,t_full):.2f} FPS ({t_full/n*1000:.1f} ms/ảnh) | "
-          f"Batch-4 SAHI ({args.merge}): {len(images)/max(1e-6,t_sahi):.2f} FPS ({t_sahi/n*1000:.1f} ms/ảnh)")
+    full_fps, sahi_fps = round(len(images) / max(1e-6, t_full), 2), round(len(images) / max(1e-6, t_sahi), 2)
+    fps_info = {"exp": exp_name, "merge": args.merge, "num_images": len(images), "full_fps": full_fps, "full_ms": round(t_full / n * 1000, 1), "sahi_fps": sahi_fps, "sahi_ms": round(t_sahi / n * 1000, 1)}
+    fps_path = Path("outputs/eval") / f"{out_pred.stem}_fps.json"
+    fps_path.parent.mkdir(parents=True, exist_ok=True)
+    fps_path.write_text(json.dumps(fps_info, indent=2), encoding="utf-8")
+
+    print(f"Full-frame: {full_fps:.2f} FPS ({fps_info['full_ms']:.1f} ms/ảnh) | Batch-4 SAHI ({args.merge}): {sahi_fps:.2f} FPS ({fps_info['sahi_ms']:.1f} ms/ảnh)")
     print(f"Đã xuất {len(sahi_preds)} dự đoán SAHI -> {out_pred.resolve()}")
 
     if vis_sample is not None:
@@ -122,11 +143,8 @@ def main():
                 x1, y1, x2, y2 = b.tolist()
                 ax.add_patch(patches.Rectangle((x1, y1), x2 - x1, y2 - y1, lw=2, ec="cyan", fc="none"))
                 ax.text(x1, max(0, y1 - 4), f"{CLASS_NAMES_VI.get(int(l), '')} {float(s):.2f}", color="cyan", fontsize=8, bbox=dict(facecolor="black", alpha=0.5, pad=1, edgecolor="none"))
-        out_vis = Path("outputs/eval/sahi_vs_full_comparison.png")
-        out_vis.parent.mkdir(parents=True, exist_ok=True)
-        plt.tight_layout(); plt.savefig(out_vis, dpi=150); plt.close()
+        plt.tight_layout(); plt.savefig(Path("outputs/eval/sahi_vs_full_comparison.png"), dpi=150); plt.close()
 
 
 if __name__ == "__main__":
     main()
-

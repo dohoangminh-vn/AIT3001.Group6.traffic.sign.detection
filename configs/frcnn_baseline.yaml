@@ -3,7 +3,7 @@
 # F1 (SmallAR):  python scripts/04_train_frcnn.py anchor_mode=small_sign_ar roi_size=7 loss_type=ce scheduler=cosine out_dir=runs/frcnn/f1_small_ar
 # F2 (Plateau):  python scripts/04_train_frcnn.py anchor_mode=small_sign_ar roi_size=7 loss_type=ce scheduler=plateau out_dir=runs/frcnn/f2_plateau
 # F3 (CB+RoI14): python scripts/04_train_frcnn.py
-# F5 (Tiled640): python scripts/04_train_frcnn.py tiled=true copy_paste=true min_size=800 max_size=800 out_dir=runs/frcnn/f5_tiled640
+# F5 (Tiled640): python scripts/04_train_frcnn.py tiled=true copy_paste=true min_size=800 max_size=2048 out_dir=runs/frcnn/f5_tiled640
 _base_: base.yaml
 
 train_json: data/processed/coco/train.json

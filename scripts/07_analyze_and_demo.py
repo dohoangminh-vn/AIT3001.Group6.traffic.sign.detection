@@ -105,17 +105,20 @@ def run_video_demo(model, frame_paths: list[Path], device: torch.device, out_mp4
 
 
 def main():
+    default_cfg = Path("configs/frcnn_baseline.yaml")
     parser = argparse.ArgumentParser(description="Trực quan hóa FPN/Grad-CAM & Video Demo FPS")
     parser.add_argument("--mode", choices=["features", "video"], required=True)
-    parser.add_argument("--config", type=Path, default=Path("configs/frcnn_baseline.yaml"))
+    parser.add_argument("--config", type=Path, default=default_cfg)
     parser.add_argument("--weights", type=Path, default=None)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument("opts", nargs="*")
     args = parser.parse_intermixed_args()
 
-    cfg = load_config(args.config, args.opts)
+    cfg_pre = load_config(args.config, args.opts)
+    weights_path = args.weights or (Path(cfg_pre["weights"]) if cfg_pre.get("weights") else Path("runs/frcnn/frcnn_smoke/best.pth" if args.smoke else f"{cfg_pre['out_dir']}/best.pth"))
+    resolved_cfg = weights_path.parent / "resolved_config.yaml"
+    cfg = load_config(resolved_cfg, args.opts) if (args.config == default_cfg and resolved_cfg.is_file()) else cfg_pre
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    weights_path = args.weights or Path("runs/frcnn/frcnn_smoke/best.pth" if args.smoke else f"{cfg['out_dir']}/best.pth")
 
     model = build_faster_rcnn(
         num_classes=cfg["num_classes"], backbone=cfg["backbone"], anchor_mode=cfg["anchor_mode"],

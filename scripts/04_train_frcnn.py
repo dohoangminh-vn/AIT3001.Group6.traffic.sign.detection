@@ -20,13 +20,27 @@ from src.frcnn_model import build_faster_rcnn
 
 
 @torch.no_grad()
-def export_coco_predictions(model, loader: DataLoader, device: torch.device, out_json: Path, score_thresh: float = 0.001) -> list:
+def export_coco_predictions(
+    model, loader: DataLoader, device: torch.device, out_json: Path, score_thresh: float = 0.001
+) -> tuple[list, float, float]:
     model.eval()
     prev_thresh = model.roi_heads.score_thresh
     model.roi_heads.score_thresh = score_thresh
-    preds = []
+    use_amp = device.type == "cuda"
+    preds, t_infer, n_imgs = [], 0.0, 0
+
     for images, targets in loader:
-        outputs = model([img.to(device) for img in images])
+        gpu_imgs = [img.to(device) for img in images]
+        if use_amp:
+            torch.cuda.synchronize()
+        t0 = time.perf_counter()
+        with torch.amp.autocast("cuda", enabled=use_amp):
+            outputs = model(gpu_imgs)
+        if use_amp:
+            torch.cuda.synchronize()
+        t_infer += time.perf_counter() - t0
+        n_imgs += len(images)
+
         for out, tgt in zip(outputs, targets):
             img_id = int(tgt["image_id"].item())
             for box, label, score in zip(out["boxes"], out["labels"], out["scores"]):
@@ -39,10 +53,13 @@ def export_coco_predictions(model, loader: DataLoader, device: torch.device, out
                     "bbox": [round(x1, 2), round(y1, 2), round(x2 - x1, 2), round(y2 - y1, 2)],
                     "score": round(sc, 5),
                 })
+
     model.roi_heads.score_thresh = prev_thresh
     out_json.parent.mkdir(parents=True, exist_ok=True)
     out_json.write_text(json.dumps(preds), encoding="utf-8")
-    return preds
+    fps = n_imgs / max(1e-6, t_infer)
+    ms_per_img = (t_infer / max(1, n_imgs)) * 1000.0
+    return preds, round(fps, 2), round(ms_per_img, 1)
 
 
 def _init_wandb(cfg: dict, out_dir: Path, smoke: bool, resume_id: str | None = None):
@@ -127,8 +144,9 @@ def main():
         min_size=min_size, max_size=max_size, freeze_backbone=freeze_bb,
     ).to(device)
 
+    val_bs = max(1, batch_size // 2) if (not args.smoke and max_size > 1800) else batch_size
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=detection_collate_fn)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, collate_fn=detection_collate_fn)
+    val_loader = DataLoader(val_ds, batch_size=val_bs, shuffle=False, num_workers=num_workers, collate_fn=detection_collate_fn)
 
     bb_params = [p for n, p in model.named_parameters() if p.requires_grad and n.startswith("backbone.")]
     hd_params = [p for n, p in model.named_parameters() if p.requires_grad and not n.startswith("backbone.")]
@@ -169,9 +187,10 @@ def main():
     pred_name = "frcnn_smoke_val.json" if args.smoke else f"{out_dir.name}_val.json"
     out_pred_path = Path("outputs/preds") / pred_name
     warmup_ep = 0 if args.smoke else cfg["warmup_epochs"]
-    no_improve = 0
+    no_improve, last_epoch_ran = 0, start_epoch - 1
 
     for epoch in range(start_epoch, epochs + 1):
+        last_epoch_ran = epoch
         if epoch <= warmup_ep:
             scale = epoch / max(1, warmup_ep)
             for g, b_lr in zip(optimizer.param_groups, base_lrs):
@@ -198,8 +217,7 @@ def main():
         avg_losses = {k: v / max(1, n_batches) for k, v in loss_sums.items()}
         avg_total = sum(avg_losses.values())
 
-        # Đánh giá pycocotools trực tiếp trên tập Val mỗi epoch
-        export_coco_predictions(model, val_loader, device, out_pred_path, cfg["eval"]["conf_export"])
+        _, _, _ = export_coco_predictions(model, val_loader, device, out_pred_path, cfg["eval"]["conf_export"])
         val_res = evaluate_coco_predictions(val_gt_path, out_pred_path)
         val_map = val_res["mAP@0.5:0.95"]
 
@@ -236,10 +254,26 @@ def main():
             print(f"Early stopping tại epoch {epoch} (không tăng mAP@0.5:0.95 trong {cfg['patience']} epochs).")
             break
 
-    writer.close()
+    # Chốt dự đoán & đo FPS chuẩn từ trọng số best.pth (tránh lấy nhầm epoch cuối)
+    if (out_dir / "best.pth").is_file():
+        model.load_state_dict(torch.load(out_dir / "best.pth", map_location=device, weights_only=True))
+    _, best_fps, best_ms = export_coco_predictions(model, val_loader, device, out_pred_path, cfg["eval"]["conf_export"])
+    best_res = evaluate_coco_predictions(val_gt_path, out_pred_path)
+    summary = {
+        "exp_name": out_dir.name, "epochs_ran": last_epoch_ran, "fps": best_fps, "ms_per_img": best_ms,
+        "git_commit": cfg.get("_git_commit"), "wandb_url": getattr(wb_run, "url", None),
+        "best_val_metrics": {k: v for k, v in best_res.items() if k != "pr_curves"},
+    }
+    (out_dir / "metrics_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
     if wb_run is not None:
+        wb_run.summary.update({
+            "best_mAP_50_95": best_res["mAP@0.5:0.95"], "best_mAP_50": best_res["mAP@0.5"],
+            "best_AP_small": best_res["AP_small"], "fps": best_fps,
+        })
         wb_run.finish()
-    print(f"Hoàn tất! Best mAP@0.5:0.95={best_map:.4f} | Weights: {(out_dir / 'best.pth').resolve()}")
+    writer.close()
+    print(f"Hoàn tất! Best mAP@0.5:0.95={best_res['mAP@0.5:0.95']:.4f} | FPS={best_fps} | Weights: {(out_dir / 'best.pth').resolve()}")
 
 
 if __name__ == "__main__":
