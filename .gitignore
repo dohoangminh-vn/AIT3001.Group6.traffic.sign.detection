@@ -11,3 +11,5 @@ wandb/
 __pycache__/
 *.pyc 
 .venv/
+docs/viva_faster_rcnn_notes.md
+report/*.zip
