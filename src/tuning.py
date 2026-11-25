@@ -30,7 +30,7 @@ def _validate_config(cfg):
         raise ValueError("tuning.thresholds must contain nms_iou and/or conf")
     for item in selected:
         section = cfg.tuning[item]
-        values = [float(value) for value in section.values]
+        values = [float(value) for value in section["values"]]
         if not values:
             raise ValueError(f"tuning.{item}.values cannot be empty")
         lower = 0.0 if item == "conf" else 0.0
@@ -112,7 +112,7 @@ def run_tuning(cfg):
         for key in order:
             section = cfg.tuning[key]
             rows = []
-            for value in map(float, section.values):
+            for value in map(float, section["values"]):
                 conf = (0.001 if key == "nms_iou" and section.metric.startswith("map")
                         else value if key == "conf" else best["conf"])
                 iou = value if key == "nms_iou" else best["nms_iou"]
