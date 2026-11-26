@@ -9,7 +9,7 @@ data:
   image_size: 640
   val_fraction: 0.2
 augmentation:
-  enabled: false
+  enabled: true
 evaluation:
   inference:
     score_threshold: 0.001
