@@ -104,6 +104,8 @@ def main():
 
     torch.manual_seed(cfg["seed"])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True
 
     if args.smoke:
         out_dir = Path("runs/frcnn/frcnn_smoke")
@@ -145,8 +147,9 @@ def main():
     ).to(device)
 
     val_bs = max(1, batch_size // 2) if (not args.smoke and max_size > 1800) else batch_size
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=detection_collate_fn)
-    val_loader = DataLoader(val_ds, batch_size=val_bs, shuffle=False, num_workers=num_workers, collate_fn=detection_collate_fn)
+    pin = device.type == "cuda"
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=detection_collate_fn, pin_memory=pin, persistent_workers=(num_workers > 0))
+    val_loader = DataLoader(val_ds, batch_size=val_bs, shuffle=False, num_workers=num_workers, collate_fn=detection_collate_fn, pin_memory=pin, persistent_workers=(num_workers > 0))
 
     bb_params = [p for n, p in model.named_parameters() if p.requires_grad and n.startswith("backbone.")]
     hd_params = [p for n, p in model.named_parameters() if p.requires_grad and not n.startswith("backbone.")]
@@ -223,6 +226,8 @@ def main():
             for k, v in loss_dict.items():
                 loss_sums[k] = loss_sums.get(k, 0.0) + float(v.item())
             n_batches += 1
+            if step_idx % 400 == 0 or step_idx == total_steps:
+                print(f"  [Ep {epoch:02d}/{epochs:02d}] step {step_idx}/{total_steps} | loss={float(total_loss.item()):.3f} | {time.time()-t0:.0f}s", flush=True)
 
         avg_losses = {k: v / max(1, n_batches) for k, v in loss_sums.items()}
         avg_total = sum(avg_losses.values())
@@ -246,7 +251,7 @@ def main():
             wb_run.log(metrics, step=epoch)
 
         print(f"Ep {epoch:02d}/{epochs:02d} ({time.time()-t0:.1f}s) | loss={avg_total:.3f} | "
-              f"mAP50={val_res['mAP@0.5']:.4f} | mAP50-95={val_map:.4f} | AP_s={val_res['AP_small']:.4f} | lr={cur_lr:.2e}")
+              f"mAP50={val_res['mAP@0.5']:.4f} | mAP50-95={val_map:.4f} | AP_s={val_res['AP_small']:.4f} | lr={cur_lr:.2e}", flush=True)
 
         if val_map > best_map:
             best_map, no_improve = val_map, 0
