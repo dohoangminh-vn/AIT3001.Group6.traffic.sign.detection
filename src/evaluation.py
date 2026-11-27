@@ -2,6 +2,7 @@
 
 import csv
 from collections import Counter
+from pathlib import Path
 
 from src.analysis import analysis_stage, prepare_analysis, read_json, resolve_analysis, write_csv, write_json
 from src.diagnostics import _load_dataset, _read_ground_truth, _read_predictions, match_detections
@@ -102,6 +103,20 @@ def _save_native_metrics(result, names, output):
     return {"map50": float(result.box.map50), "map50_95": float(result.box.map)}
 
 
+def _small_object_wandb_metrics(path):
+    """Flatten per-area CSV rows into W&B history values, preserving undefined AP as N/A."""
+    values = {}
+    with Path(path).open(encoding="utf-8-sig", newline="") as stream:
+        for row in csv.DictReader(stream):
+            prefix = f"small_eval/area_lt_{int(row['area_cutoff_px2_exclusive'])}"
+            values[f"{prefix}/gt_bbox_count"] = int(row["gt_bbox_count"])
+            values[f"{prefix}/gt_image_count"] = int(row["gt_image_count"])
+            for field, metric in (("ap50", "AP50"), ("ap50_95", "AP50_95")):
+                if row[field] not in (None, ""):
+                    values[f"{prefix}/{metric}"] = float(row[field])
+    return values
+
+
 def run_evaluation(cfg):
     cfg, root, checkpoint, expected = resolve_analysis(cfg)
     with analysis_stage(root, "evaluation", cfg) as output:
@@ -181,11 +196,8 @@ def run_evaluation(cfg):
                 run.use_artifact(source["artifact_uri"].removeprefix("wandb://"), type="model")
             values = {f"evaluation/{key}": value for key, value in native_scores.items()}
             values.update({f"operating/{key}": value for key, value in totals.items()})
+            values.update(_small_object_wandb_metrics(output / "small_object_metrics.csv"))
             run.log(values)
-            for row in csv.DictReader((output / "small_object_metrics.csv").read_text(encoding="utf-8-sig").splitlines()):
-                for key in ("ap50", "ap50_95"):
-                    if row[key]:
-                        run.summary[f"small_eval/area_lt_{row['area_cutoff_px2_exclusive']}/{key}"] = float(row[key])
     return output
 
 

@@ -5,13 +5,29 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from src.analysis import read_json
-from src.evaluation import operating_metrics, run_evaluation
+from src.evaluation import _small_object_wandb_metrics, operating_metrics, run_evaluation
 from src.small_object_metrics import log_small_object_metrics
 from src.tuning import _map
 from test_analysis import config, source_fixture
 
 
 class OperatingMetricTests(unittest.TestCase):
+    def test_small_object_history_includes_ap_and_counts_and_skips_undefined_ap(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "small.csv"
+            path.write_text(
+                "area_cutoff_px2_exclusive,gt_bbox_count,gt_image_count,ap50,ap50_95\n"
+                "128,3,2,0.0,0.25\n"
+                "256,0,0,,\n",
+                encoding="utf-8",
+            )
+            values = _small_object_wandb_metrics(path)
+        self.assertEqual(values["small_eval/area_lt_128/AP50"], 0.0)
+        self.assertEqual(values["small_eval/area_lt_128/AP50_95"], 0.25)
+        self.assertEqual(values["small_eval/area_lt_128/gt_bbox_count"], 3)
+        self.assertEqual(values["small_eval/area_lt_256/gt_image_count"], 0)
+        self.assertNotIn("small_eval/area_lt_256/AP50", values)
+
     def test_wrong_class_empty_predictions_and_size_denominators(self):
         records = [{"image": "1.png", "ground_truths": [
             {"class_id": 0, "box": [0, 0, 8, 8]},
@@ -72,7 +88,8 @@ class OperatingMetricTests(unittest.TestCase):
             dataset = {"images": [{"id": 1, "file_name": "1.png"}], "annotations": [{"image_id": 1, "area": 64}], "categories": []}
             ultralytics = SimpleNamespace(YOLO=MagicMock(return_value=model), settings=MagicMock())
             torch = SimpleNamespace(cuda=SimpleNamespace(is_available=lambda: False))
-            with patch.dict("sys.modules", {"ultralytics": ultralytics, "torch": torch, "wandb": MagicMock()}), \
+            wandb = MagicMock()
+            with patch.dict("sys.modules", {"ultralytics": ultralytics, "torch": torch, "wandb": wandb}), \
                  patch("src.evaluation.prepare_analysis", return_value="data.yaml"), \
                  patch("src.evaluation._load_dataset", return_value=([], None, {0: "a"})), \
                  patch("src.evaluation.collect_predictions", return_value=(records, {0: "a"})), \
@@ -86,6 +103,11 @@ class OperatingMetricTests(unittest.TestCase):
             self.assertEqual(summary["operating"]["fn"], 1)
             self.assertEqual(summary["ultralytics"]["map50"], 0.8)
             self.assertTrue((output / "small_object_metrics.csv").is_file())
+            wandb_run = wandb.init.return_value.__enter__.return_value
+            logged = wandb_run.log.call_args.args[0]
+            self.assertIn("small_eval/area_lt_128/AP50", logged)
+            self.assertIn("small_eval/area_lt_128/gt_bbox_count", logged)
+            self.assertEqual(logged["small_eval/area_lt_128/AP50"], 0.8)
 
 
 if __name__ == "__main__":
