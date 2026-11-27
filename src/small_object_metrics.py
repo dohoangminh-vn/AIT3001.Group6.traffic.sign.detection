@@ -190,11 +190,7 @@ def log_small_object_metrics(dataset, predictions, output_csv, run,
     for cutoff in sorted(cutoffs):
         eligible = [annotation for annotation in dataset["annotations"] if annotation["area"] < cutoff]
         eligible_images = {annotation["image_id"] for annotation in eligible}
-        if not eligible:
-            raise ValueError(f"No validation ground-truth boxes have area < {cutoff} px²")
-        ap50, ap50_95 = _run_coco_area_eval(dataset, predictions, cutoff)
-        if ap50 is None or ap50_95 is None:
-            raise RuntimeError(f"COCO evaluator returned undefined AP for area < {cutoff} px²")
+        ap50, ap50_95 = _run_coco_area_eval(dataset, predictions, cutoff) if eligible else (None, None)
         suffix = f"area_lt_{cutoff}"
         rows.append({"area_cutoff_px2_exclusive": cutoff, "gt_bbox_count": len(eligible),
                      "gt_image_count": len(eligible_images), "ap50": ap50, "ap50_95": ap50_95})
@@ -210,7 +206,8 @@ def log_small_object_metrics(dataset, predictions, output_csv, run,
         ])
         writer.writeheader()
         writer.writerows(rows)
-    run.log(log_values)
+    if run is not None:
+        run.log(log_values)
     return rows
 
 

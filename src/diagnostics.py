@@ -4,6 +4,7 @@ import csv
 import hashlib
 import json
 import math
+import random
 import re
 import tempfile
 from datetime import datetime
@@ -18,6 +19,7 @@ from src.data import prepare
 IMAGE_SUMMARY_FIELDS = (
     "image", "width", "height", "ground_truths", "predictions", "true_positives",
     "false_positives", "false_negatives", "misclassifications", "error_count", "overlay",
+    "classes", "error_types",
 )
 ERROR_FIELDS = (
     "image", "error_type", "ground_truth_class_id", "ground_truth_class",
@@ -133,7 +135,7 @@ def resolve_diagnostic_checkpoint(reference, download_root):
 
     try:
         directory = Path(wandb.Api().artifact(
-            artifact_reference, type="checkpoint"
+            artifact_reference, type="model" if "_model:" in artifact_reference else "checkpoint"
         ).download(root=str(download_root)))
     except Exception as exc:
         raise RuntimeError(
@@ -386,6 +388,25 @@ def _new_output_dir(output_root, checkpoint_reference):
 
 
 def run_diagnostics(cfg):
+    from omegaconf import OmegaConf
+    if OmegaConf.is_config(cfg) and (cfg.analysis.checkpoint or cfg.analysis.run_dir):
+        from src.analysis import analysis_stage, prepare_analysis, read_json, resolve_analysis, write_json
+        cfg, root, checkpoint, expected = resolve_analysis(cfg, "diagnostic")
+        with analysis_stage(root, "diagnostics", cfg) as output:
+            data_yaml = prepare_analysis(cfg, expected)
+            cfg.diagnostic.checkpoint = str(checkpoint)
+            from ultralytics import settings
+            settings.update({"wandb": False})
+            _run_diagnostics(cfg, data_yaml, output, checkpoint)
+            report = read_json(output / "report.json")
+            source = read_json(root / "run_manifest.json")
+            report.update({key: source[key] for key in ("run_name", "artifact_uri", "checkpoint_sha256")})
+            write_json(output / "report.json", report)
+        return output
+    return _run_diagnostics(cfg)
+
+
+def _run_diagnostics(cfg, prepared_yaml=None, destination=None, checkpoint=None):
     """Run predictions over the prepared validation split and write a report."""
     reference = cfg.diagnostic.checkpoint
     if not reference:
@@ -400,7 +421,7 @@ def run_diagnostics(cfg):
     if not 0.0 < match_iou <= 1.0:
         raise ValueError("diagnostic.match_iou must be greater than 0 and at most 1")
 
-    data_yaml = prepare(
+    data_yaml = prepared_yaml or prepare(
         cfg.data.root, cfg.data.prepared_dir, cfg.seed, cfg.data.val_fraction
     )
     image_paths, label_dir, names = _load_dataset(data_yaml)
@@ -411,6 +432,12 @@ def run_diagnostics(cfg):
         json.dumps(split_ids, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     preparation = split_manifest.get("preparation", {})
+    from types import SimpleNamespace
+    inference = getattr(getattr(cfg, "evaluation", None), "inference", None) or SimpleNamespace(nms_iou=0.7, max_detections=300)
+    correct_remaining = int(getattr(cfg.diagnostic, "correct_samples", 30))
+    if correct_remaining < 0:
+        raise ValueError("diagnostic.correct_samples must be nonnegative")
+    random.Random(cfg.seed).shuffle(image_paths)
 
     try:
         from ultralytics import YOLO
@@ -419,9 +446,10 @@ def run_diagnostics(cfg):
 
     output_root = Path(cfg.output_dir).expanduser().resolve()
     with tempfile.TemporaryDirectory(prefix="traffic-sign-diagnose-") as temporary:
-        checkpoint_path = resolve_diagnostic_checkpoint(reference, temporary)
+        checkpoint_path = checkpoint or resolve_diagnostic_checkpoint(reference, temporary)
         model = YOLO(str(checkpoint_path))
-        output_dir = _new_output_dir(output_root, str(reference))
+        output_dir = destination or _new_output_dir(output_root, str(reference))
+        (output_dir / "images").mkdir(exist_ok=True)
         image_summary_path = output_dir / "image_summary.csv"
         errors_path = output_dir / "errors.csv"
         totals = {
@@ -447,8 +475,8 @@ def run_diagnostics(cfg):
                 save=False,
                 verbose=False,
                 conf=confidence,
-                iou=float(cfg.evaluation.inference.nms_iou),
-                max_det=int(cfg.evaluation.inference.max_detections),
+                iou=float(inference.nms_iou),
+                max_det=int(inference.max_detections),
                 batch=int(cfg.diagnostic.batch_size),
                 half=use_half,
                 imgsz=int(cfg.model.imgsz),
@@ -469,12 +497,14 @@ def run_diagnostics(cfg):
                 )
                 error_count = len(records)
                 overlay = ""
-                if error_count:
+                if error_count or correct_remaining:
                     overlay_path = output_dir / "images" / f"{image_path.stem}.jpg"
                     _write_overlay(
                         image_path, ground_truths, predictions, matching, names, overlay_path
                     )
                     overlay = (Path("images") / overlay_path.name).as_posix()
+                    if not error_count:
+                        correct_remaining -= 1
 
                 summary_writer.writerow({
                     "image": image_path.name,
@@ -488,6 +518,8 @@ def run_diagnostics(cfg):
                     "misclassifications": matching["misclassifications"],
                     "error_count": error_count,
                     "overlay": overlay,
+                    "classes": "|".join(sorted({_class_name(item["class_id"], names) for item in ground_truths + predictions})),
+                    "error_types": "|".join(sorted({item["error_type"] for item in records})),
                 })
                 errors_writer.writerows(records)
                 processed += 1
@@ -512,8 +544,8 @@ def run_diagnostics(cfg):
             "validation_images": len(image_paths),
             "confidence_threshold": confidence,
             "matching_iou_threshold": match_iou,
-            "nms_iou_threshold": float(cfg.evaluation.inference.nms_iou),
-            "max_detections": int(cfg.evaluation.inference.max_detections),
+            "nms_iou_threshold": float(inference.nms_iou),
+            "max_detections": int(inference.max_detections),
             "device": str(cfg.diagnostic.device),
             "half_precision": use_half,
             "imgsz": int(cfg.model.imgsz),

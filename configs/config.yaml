@@ -11,11 +11,24 @@ data:
 augmentation:
   enabled: true
 evaluation:
+  batch_size: 1
+  workers: 0
+  device: ${model.device}
+  amp: true
+  tile: false
+  conf: 0.001
+  match_iou: 0.5
   inference:
     score_threshold: 0.001
-    nms_iou: 0.7
+    nms_iou: 0.75
     max_detections: 300
   small_object_area_cutoffs_px2: [128, 256, 512, 1024]
+analysis:
+  checkpoint: null
+  run_dir: null
+  thresholds_file: null
+  cache_dir: ${output_dir}/downloads
+  export_dir: /kaggle/working/exports
 output_dir: outputs
 resume: null
 prepare_only: false
@@ -29,9 +42,10 @@ diagnostic:
   checkpoint: null
   conf: 0.25
   match_iou: 0.5
-  batch_size: ${model.batch_size}
+  batch_size: 1
+  correct_samples: 30
   amp: true
-  tile: false
+  tile: ${evaluation.tile}
   device: ${model.device}
 tuning:
   run_name: null

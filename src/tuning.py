@@ -1,14 +1,8 @@
 """Validation-only inference threshold tuning for W&B YOLO runs."""
 
-import csv
-import hashlib
-import json
-import tempfile
-from datetime import datetime
-from pathlib import Path
-
-from src.data import prepare
-from src.diagnostics import _load_dataset, _read_ground_truth, _read_predictions, match_detections, resolve_diagnostic_checkpoint
+import math
+from src.analysis import analysis_stage, prepare_analysis, read_json, resolve_analysis, write_csv, write_json
+from src.evaluation import collect_predictions, operating_metrics
 
 METRICS = {"map50_95", "map50", "f1", "precision", "recall"}
 
@@ -23,8 +17,6 @@ def _find_run(api, entity, project, name):
 
 
 def _validate_config(cfg):
-    if not cfg.tuning.run_name:
-        raise ValueError("Set tuning.run_name to the exact W&B run name")
     selected = list(cfg.tuning.thresholds)
     if not selected or any(item not in ("nms_iou", "conf") for item in selected):
         raise ValueError("tuning.thresholds must contain nms_iou and/or conf")
@@ -33,76 +25,40 @@ def _validate_config(cfg):
         values = [float(value) for value in section["values"]]
         if not values:
             raise ValueError(f"tuning.{item}.values cannot be empty")
-        lower = 0.0 if item == "conf" else 0.0
-        if any(value <= lower or value > 1 for value in values):
+        if any(not math.isfinite(value) or value <= 0 or value > 1 for value in values):
             raise ValueError(f"tuning.{item}.values must be greater than 0 and at most 1")
         if section.metric not in METRICS:
             raise ValueError(f"Unsupported tuning metric: {section.metric}")
     if not 0 < float(cfg.tuning.match_iou) <= 1:
         raise ValueError("tuning.match_iou must be greater than 0 and at most 1")
+    if not 0 <= float(cfg.tuning.fixed_conf) <= 1 or not 0 < float(cfg.tuning.fixed_nms_iou) <= 1:
+        raise ValueError("Invalid tuning.fixed_conf or tuning.fixed_nms_iou")
 
 
-def _counts(model, image_paths, label_dir, cfg, confidence, nms_iou, names):
-    predictions_stream = model.predict(
-        source=[str(path) for path in image_paths], stream=True, save=False, verbose=False,
-        conf=confidence, iou=nms_iou, max_det=int(cfg.evaluation.inference.max_detections),
-        batch=int(cfg.tuning.batch_size), half=bool(cfg.tuning.amp) and str(cfg.tuning.device) != "cpu",
-        imgsz=int(cfg.model.imgsz), tile=cfg.tuning.tile, device=cfg.tuning.device,
-    )
-    totals = {"tp": 0, "fp": 0, "fn": 0}
-    for image_path, result in zip(image_paths, predictions_stream, strict=True):
-        from PIL import Image
-        with Image.open(image_path) as image:
-            width, height = image.size
-        gt = _read_ground_truth(label_dir / f"{image_path.stem}.txt", width, height)
-        pred = _read_predictions(result)
-        matched = match_detections(gt, pred, float(cfg.tuning.match_iou))
-        # A wrong-class overlap is one FP and one FN.
-        totals["tp"] += matched["true_positives"]
-        totals["fp"] += len(matched["unmatched_predictions"]) + matched["misclassifications"]
-        totals["fn"] += len(matched["unmatched_ground_truths"]) + matched["misclassifications"]
-    precision = totals["tp"] / (totals["tp"] + totals["fp"]) if totals["tp"] + totals["fp"] else 0.0
-    recall = totals["tp"] / (totals["tp"] + totals["fn"]) if totals["tp"] + totals["fn"] else 0.0
-    return {**totals, "precision": precision, "recall": recall,
-            "f1": 2 * precision * recall / (precision + recall) if precision + recall else 0.0}
-
-
-def _map(model, data_yaml, cfg, nms_iou, confidence=0.001):
+def _map(model, data_yaml, cfg, nms_iou, output, confidence=0.001):
     result = model.val(
         data=str(data_yaml), imgsz=int(cfg.model.imgsz), batch=int(cfg.tuning.batch_size),
         device=cfg.tuning.device, half=bool(cfg.tuning.amp) and str(cfg.tuning.device) != "cpu",
         conf=confidence, iou=nms_iou, max_det=int(cfg.evaluation.inference.max_detections),
-        plots=False, verbose=False, workers=0,
+        tile=cfg.tuning.tile, plots=False, verbose=False, workers=0,
+        project=str(output), name="native", exist_ok=True,
     )
     return {"map50_95": float(result.box.map), "map50": float(result.box.map50)}
 
 
-def _write_csv(path, rows):
-    fields = list(rows[0])
-    with path.open("w", newline="", encoding="utf-8-sig") as stream:
-        writer = csv.DictWriter(stream, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows(rows)
-
-
 def run_tuning(cfg):
     _validate_config(cfg)
-    import wandb
-    api = wandb.Api()
-    run = _find_run(api, cfg.tracking.entity, cfg.tracking.project, str(cfg.tuning.run_name))
-    artifact_uri = f"{run.entity}/{run.project}/run_{run.id}_checkpoint:latest"
-    data_yaml = prepare(cfg.data.root, cfg.data.prepared_dir, cfg.seed, cfg.data.val_fraction)
-    images, label_dir, names = _load_dataset(data_yaml)
-    split = json.loads((Path(data_yaml).parent / "split.json").read_text(encoding="utf-8"))
-    split_ids = split.get("splits", {}).get("val", [])
-    split_hash = hashlib.sha256(json.dumps(split_ids, separators=(",", ":")).encode()).hexdigest()
-    output = Path(cfg.output_dir).resolve() / "tuning"
-    slug = "".join(c if c.isalnum() or c in "._-" else "_" for c in run.name).strip("._-")
-    output = output / f"{slug}-{datetime.now():%Y%m%d-%H%M%S}"
-    output.mkdir(parents=True, exist_ok=False)
-    with tempfile.TemporaryDirectory(prefix="traffic-sign-tune-") as temporary:
-        checkpoint = resolve_diagnostic_checkpoint(artifact_uri, temporary)
-        from ultralytics import YOLO
+    if cfg.tuning.run_name and not cfg.analysis.checkpoint and not cfg.analysis.run_dir:
+        import wandb
+        run = _find_run(wandb.Api(), cfg.tracking.entity, cfg.tracking.project, str(cfg.tuning.run_name))
+        cfg.analysis.checkpoint = f"wandb://{run.entity}/{run.project}/run_{run.id}_model:best"
+    cfg, root, checkpoint, expected = resolve_analysis(cfg, "tuning")
+    if cfg.analysis.thresholds_file:
+        raise ValueError("Do not supply analysis.thresholds_file when selecting new thresholds")
+    with analysis_stage(root, "tuning", cfg) as output:
+        data_yaml = prepare_analysis(cfg, expected)
+        from ultralytics import YOLO, settings
+        settings.update({"wandb": False})
         model = YOLO(str(checkpoint))
         if "nms_iou" in cfg.tuning.thresholds and bool(getattr(model.model, "end2end", False)):
             raise ValueError("This checkpoint is end-to-end and does not use NMS IoU")
@@ -112,12 +68,22 @@ def run_tuning(cfg):
         for key in order:
             section = cfg.tuning[key]
             rows = []
+            cached = None
             for value in map(float, section["values"]):
                 conf = (0.001 if key == "nms_iou" and section.metric.startswith("map")
                         else value if key == "conf" else best["conf"])
                 iou = value if key == "nms_iou" else best["nms_iou"]
-                scores = (_map(model, data_yaml, cfg, iou, conf) if section.metric.startswith("map")
-                          else _counts(model, images, label_dir, cfg, conf, iou, names))
+                if section.metric.startswith("map"):
+                    scores = _map(model, data_yaml, cfg, iou, output, conf)
+                else:
+                    # Confidence filtering happens on CPU; NMS is run just once for a confidence sweep.
+                    if cached is None or key == "nms_iou":
+                        cached = collect_predictions(model, data_yaml, cfg,
+                                                     min(map(float, section["values"])) if key == "conf" else conf,
+                                                     iou, cfg.tuning)
+                    records, names = cached
+                    scores, *_ = operating_metrics(records, names, conf, float(cfg.tuning.match_iou),
+                                                    cfg.evaluation.small_object_area_cutoffs_px2)
                 rows.append({"threshold": value, "conf": conf, "nms_iou": iou,
                              **scores, "selected": False})
             winner = max(rows, key=lambda row: (
@@ -128,16 +94,16 @@ def run_tuning(cfg):
             reports[key] = {"metric": section.metric, "value": winner["threshold"],
                             "score": winner[section.metric], "conf": winner["conf"],
                             "nms_iou": winner["nms_iou"]}
-            _write_csv(output / f"{key}_results.csv", rows)
+            write_csv(output / f"{key}_results.csv", rows)
             if section.metric.startswith("map") and key == "conf":
                 print("Note: selecting confidence by mAP can remove low-confidence detections and reduce recall.")
-    result = {"run_name": run.name, "run_id": run.id, "checkpoint": artifact_uri,
-              "validation_split_sha256": split_hash, "validation_images": len(images),
-              "selected_thresholds": best, "selection": reports,
-              "metric_matching_iou": float(cfg.tuning.match_iou),
-              "class_names": {str(k): v for k, v in names.items()}}
-    (output / "best_thresholds.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+        source = read_json(root / "run_manifest.json")
+        result = {key: source[key] for key in ("run_name", "run_id", "artifact_uri", "checkpoint_sha256", "validation_split_sha256")}
+        result.update({"selected_thresholds": best, "selection": reports,
+                       "metric_matching_iou": float(cfg.tuning.match_iou), "imgsz": int(cfg.model.imgsz),
+                       "tile": cfg.tuning.tile, "max_detections": int(cfg.evaluation.inference.max_detections)})
+        write_json(output / "best_thresholds.json", result)
     print(f"Selected thresholds: conf={best['conf']}, NMS IoU={best['nms_iou']}")
     print(f"Tuning results: {output}")
-    print(f"Run diagnostics with: python diagnose.py diagnostic.checkpoint={artifact_uri} diagnostic.conf={best['conf']} evaluation.inference.nms_iou={best['nms_iou']}")
+    print(f"Threshold file: {output / 'best_thresholds.json'}")
     return output

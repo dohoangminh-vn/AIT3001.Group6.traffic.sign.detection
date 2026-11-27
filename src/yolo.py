@@ -64,7 +64,7 @@ def checkpoint_callback(run, info, every, online):
         api = wandb.Api()
         # W&B's artifact_versions expects the collection name, not the full
         # artifact identifier (which may include ``:vN``).
-        collection = f"{run.entity}/{run.project}/run_{run.id}_checkpoint"
+        collection = f"{info.get('entity', run.entity)}/{info.get('project', run.project)}/run_{run.id}_checkpoint"
         for version in api.artifact_versions("checkpoint", collection):
             if version.version != current_version:
                 version.delete()
@@ -96,6 +96,23 @@ def checkpoint_callback(run, info, every, online):
 
 
 def train(cfg):
+    """Keep failure state readable even when invoked outside the notebook."""
+    from src.analysis import read_json, write_json
+    output = Path(cfg.output_dir).resolve()
+    before = set(output.glob("*/run_manifest.json"))
+    try:
+        return _train(cfg)
+    except Exception as error:
+        for path in set(output.glob("*/run_manifest.json")) - before:
+            manifest = read_json(path)
+            manifest["stages"]["training"] = {"status": "failed", "error": str(error)}
+            if manifest.get("model_upload") == "pending":
+                manifest["model_upload"] = "failed"
+            write_json(path, manifest)
+        raise
+
+
+def _train(cfg):
     from src.small_object_metrics import validate_evaluation_config
 
     validate_evaluation_config(
@@ -159,6 +176,8 @@ def train(cfg):
             run.define_metric(f"{prefix}/*", step_metric="epoch")
         info = {"run_id": run.id, "entity": run.entity, "project": run.project,
                 "name": run.name, "data": data_key}
+        from src.analysis import initialize_run
+        initialize_run(save_dir, cfg, run)
         run.config.update({
             "backend": cfg.model.backend,
             "weights": cfg.model.weights,
@@ -218,25 +237,9 @@ def train(cfg):
                         amp=cfg.model.amp, seed=cfg.seed, deterministic=True,
                         fraction=cfg.model.fraction, cache=False, save=True,
                         project=str(output), name=name, **args, **train_args)
-        try:
-            from src.small_object_metrics import evaluate_small_objects
-
-            small_metrics = evaluate_small_objects(
-                checkpoint=model.trainer.best,
-                data_root=cfg.data.root,
-                prepared_dir=cfg.data.prepared_dir,
-                output_csv=save_dir / "small_object_metrics.csv",
-                run=run,
-                imgsz=cfg.model.imgsz,
-                batch=cfg.model.batch_size,
-                device=device,
-                workers=cfg.model.workers,
-                inference_cfg=OmegaConf.to_container(cfg.evaluation.inference, resolve=True),
-                area_cutoffs=cfg.evaluation.small_object_area_cutoffs_px2,
-            )
-            print(f"Small-object metrics: {save_dir / 'small_object_metrics.csv'} ({len(small_metrics)} area cutoffs)")
-        except Exception as error:
-            # Keep trained weights and standard metrics when optional area evaluation fails.
-            print(f"Warning: small-object evaluation failed; no custom metrics were logged: {error}")
+        from src.analysis import publish_best
+        manifest = publish_best(save_dir, model.trainer.best, run, cfg.tracking.mode == "online")
+        print(f"Run directory: {save_dir}")
+        print(f"Best model artifact: {manifest['artifact_uri'] or 'offline; sync W&B before evaluation'}")
         print(f"Best weights: {model.trainer.best}")
         print(f"W&B checkpoint: {run.entity}/{run.project}/run_{run.id}_checkpoint:latest")
